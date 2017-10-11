@@ -1,5 +1,27 @@
-# computer vision experiments
+"""
+computer vision experiments
 
+IMPORTANT
+
+x,y -> m,n convention
+
+Assuming top left is (0,0)
+
+x,y is the start of a region, m,n is the end:
+
+  +-------------+
+  |x,y          |
+  |             |
+  |             |
+  |             |
+  |             |
+  |          m,n|
+  +-------------+
+
+  so m is a short hand for extend of a row begining at x
+  and n is the same for a col starting at y
+  
+"""
 import numpy as np
 
 
@@ -34,7 +56,7 @@ class Region( object ):
         self.bb_m = max( y, self.bb_m )
         self.bb_n = max( n, self.bb_n )
         # update scanlline
-        self.sl_x, self.sl_m self.sl_n = x, m, y
+        self.sl_x, self.sl_m, self.sl_n = x, m, y
         
         
     def merge( self, other ):
@@ -45,13 +67,13 @@ class Region( object ):
         self.bb_m = max( other.m, self.bb_m )
         self.bb_n = max( other.n, self.bb_n )
         # merge touching status
-        self.touching += other.touching
+        self.touching |= other.touching
         # keep scanline, I assume self has found a contact with other
         
         
 class SIMDsim( object ):
     """ This is a bit cruddy, but the idea is to simulate what we'd get with a
-        few NEON commands.  Variable width (8/16) easily acomplished. """
+        few NEON commands.  Switching width (8/16) easily acomplished. """
     
     WIDTH   = 16 # Simulate 128-Bit Vector pipeline, or 64-Bit mode
     _INDEXS = tuple( range( WIDTH ) ) # conveniance
@@ -105,8 +127,8 @@ def connected( data, data_wh, threshold ):
     idx         = 0         # index into data
     reg_idx     = 0         # index of last region in the region list
     reg_start   = 0         # index of first region touching current image line
+    reg_list    = []        # list of regions found so far
     last_y      = -1        # last y encountered, to see if we've skiped a line
-    regs        = []        # list of regions found so far
     tmp_reg     = Region()  # temporary region for comparison & mergin
     tmp_x, tmp_y= 0, 0      # temp x & y position of bright pixel
     data_in     = 0         # frame to begin scanning
@@ -126,52 +148,89 @@ def connected( data, data_wh, threshold ):
         align_offset = idx % align
         skipping     = True
         vec_res      = simd.wideFlood( False )
+        
+        # skipping
+        # ########
         # advance by single bytes, till we are in alignment
         for i in range( align_offset ):
             # possibly needs an ended test...
             idx += 1
-            if data[idx] >= threshold:
+            if( data[idx] >= threshold ):
                 # got one !
                 skipping   = False
                 vec_res[0] = True # Needed??
                 break
         # skip over dark px, byte aligned        
-        ended = (idx>data_out)
+        ended = (idx > data_out)
         while( skipping and not ended ):
             vec_res = simd.wideGTE( data[idx:idx+vec_width], vec_th )
             v_idx = simd.idxOfTrue( vec_res )
-            if v_idx < 0:
+            if( v_idx < 0 ):
                 #found one
                 skipping = False
                 idx += v_idx
                 break
             idx += vec_width
-            ended = (idx>data_out)
-        # either we're out of data, or we've found one
-        if ended:
-            return regs
-        # otherwise we have a bright pixel, so start scanning
+            ended = (idx > data_out)
+        # either we're out of data, or we've found a bright line
+        if( ended ):
+            return reg_list
+        # we have a bright pixel, so start...
+        
+        # Scanning
+        # ########
         tmp_reg.reset()
         # compute scanline x,y position in square image
         tmp_reg.sl_x, tmp_reg.sl_n = divmod( idx, d_w )
-        if tmp_reg.sl_n>last_y:
-            # Tidy list of found regions if we advance a line
+        # housekeeping...
+        if( tmp_reg.sl_n > last_y ):
+            # Tidy list of found regions if we've advanced a line
+            last_y = tmp_reg.sl_n
+            reg_last = len( reg_list )
+            reg_inspect = reg_start # region we're looking at
+            touching_y = last_y - 1 # y of a scanline that can tocuh the current scanline
+            for i in range( reg_start, reg_last ):
+                # maybe go through the list backwards, bubbling non-touching regions up to
+                # reg_start++ ?  Like a gnome sort
+                if reg_list[i].sl_n != touching_y:
+                    # advance reg_start over this region - it can't touch this line
+                    reg_inspect += 1
+                else:
+                    # keep this in the active side of reg_start
+                    pass
+            # from reg_start to reg_last
             #   demote regions that can't touch this y
             #   update reg_idx, reg_start
             #   TODO
             pass
             
         # scan bright px
-        while data[idx] >= threshold:
+        while( data[idx] >= threshold ):
             idx += 1
-        tmp_reg.sl_m = idx
+        tmp_reg.sl_m = idx - 1 # last bright px
+        
+        # Connecting
+        # ##########
         # check for tmp_reg's scanline conection to existing regions
-        # step through regions
-        # can tmp_reg touch it/them?
+        
+        # find a region that could plausably touch this scanline
+        # TODO: What if this is first Region?
+        while( reg_list[reg_idx].sl_x > tmp_reg.sl_m ):
+            reg_idx += 1
+        # can tmp_reg touch it
+        """     some possible scanline configurations
+        
+              --     --     ---    --
+             ---    ----    ---    ---
+            ---      --     ---     --
+            
+        """
         # merge
         # otherwise this is a new region
         new_reg = Region()
         new_reg.push( tmp_reg.sl_x, tmp_reg.sl_n, tmp_reg.sl_m )
-        regs.append( new_reg )
+        reg_list.append( new_reg )
     # we can only be here if we've ended
-    return regs
+    return reg_list
+    
+    

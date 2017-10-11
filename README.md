@@ -53,6 +53,9 @@ Ok, this is the big one.  My project to create an Open Source MoCap Camera based
 - [ ] Sync system
 - [ ] Telnet
 
+or alternativly, sync might require us to use an RTOS.  Or even worese, roll something.  Let's not.
+
+
 ### C&C Program
  - [ ] Emit simple 'Verb:Noun' commands (UDP, 8-Bit)
  - [ ] Communication broker to send & receive data from a camera
