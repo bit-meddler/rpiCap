@@ -218,7 +218,9 @@ def connected( data, data_wh, threshold ):
         while( reg_list[reg_idx].sl_x > tmp_reg.sl_m ):
             reg_idx += 1
         # can tmp_reg touch it
-        """     some possible scanline configurations
+        """
+        We're only interested in 4-connected Neighbours
+        some possible scanline configurations
         
               --     --     ---    --
              ---    ----    ---    ---
@@ -233,4 +235,12 @@ def connected( data, data_wh, threshold ):
     # we can only be here if we've ended
     return reg_list
     
-    
+# Tests
+a = ([10]*3 + [0]*3) * 3
+A = np.array(a).reshape(3,6)
+a.reverse()
+B = np.array(a).reshape(3,6)
+test = np.vstack( [A,B] )
+shape = test.shape
+
+regs = connected( test.ravel(), shape, 5 )
