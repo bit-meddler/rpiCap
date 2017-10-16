@@ -127,7 +127,7 @@ def connected( data, data_wh, threshold ):
     idx         = 0         # index into data
     reg_idx     = 0         # index of last region in the region list
     reg_start   = 0         # index of first region touching current image line
-    reg_list    = []        # list of regions found so far
+    reg_list    = [[],[]]   # list of regions found so far 0=Can't possibly touch, 1=might touch
     last_y      = -1        # last y encountered, to see if we've skiped a line
     tmp_reg     = Region()  # temporary region for comparison & mergin
     tmp_x, tmp_y= 0, 0      # temp x & y position of bright pixel
@@ -185,24 +185,40 @@ def connected( data, data_wh, threshold ):
         # housekeeping...
         if( tmp_reg.sl_n > last_y ):
             # Tidy list of found regions if we've advanced a line
+            # reset reg_idx to begining of active list
             last_y = tmp_reg.sl_n
-            reg_last = len( reg_list )
-            reg_inspect = reg_start # region we're looking at
+            
             touching_y = last_y - 1 # y of a scanline that can tocuh the current scanline
-            for i in range( reg_start, reg_last ):
+            # A bit hokey, but it will work
+            done = False
+            reg_inspect = 0
+            move_list = [] # idxs of active reg list to move to inactive
+            while( not done ):
                 # maybe go through the list backwards, bubbling non-touching regions up to
-                # reg_start++ ?  Like a gnome sort
-                if reg_list[i].sl_n != touching_y:
-                    # advance reg_start over this region - it can't touch this line
+                # reg_start++ ?  Like a gnome sort??
+                candidates = len( reg_list[1] )
+                if( candidates < 1 ):
+                    # out of candidates, need to append to reg_list
+                    done = True
+                    break
+                if( reg_inspect >= candidates ):
+                    # runout of regions, this is a new one
+                    done = True
+                    break
+                    
+                if reg_list[1][reg_inspect].sl_n != touching_y:
+                    # this region can't touch the line, drop it
+                    move_list.append( reg_inspect )
                     reg_inspect += 1
                 else:
-                    # keep this in the active side of reg_start
-                    pass
-            # from reg_start to reg_last
-            #   demote regions that can't touch this y
-            #   update reg_idx, reg_start
-            #   TODO
-            pass
+                    # keep this in the active list, move inspection idx along
+                    reg_inspect += 1
+
+            # we have a list of idxs to demote from the active list to the finished list
+            for i in move_list:
+                reg_list[0].append( reg_list[1][i] )
+                reg_list[1].remove( i )
+            reg_idx = 0
             
         # scan bright px
         while( data[idx] >= threshold ):
