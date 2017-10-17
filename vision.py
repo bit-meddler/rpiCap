@@ -180,7 +180,7 @@ def connected( data, data_wh, threshold ):
         # Scanning
         # ########
         tmp_reg.reset()
-        # compute scanline x,y position in square image
+        # compute scanline x,y position in rectilinear image
         tmp_reg.sl_x, tmp_reg.sl_n = divmod( idx, d_w )
         # housekeeping...
         if( tmp_reg.sl_n > last_y ):
@@ -195,14 +195,14 @@ def connected( data, data_wh, threshold ):
             move_list = [] # idxs of active reg list to move to inactive
             while( not done ):
                 # maybe go through the list backwards, bubbling non-touching regions up to
-                # reg_start++ ?  Like a gnome sort??
+                # reg_start++ ?  Like a gnome sort??  Would happen in place to a 1D list
                 candidates = len( reg_list[1] )
                 if( candidates < 1 ):
                     # out of candidates, need to append to reg_list
                     done = True
                     break
                 if( reg_inspect >= candidates ):
-                    # runout of regions, this is a new one
+                    # runout of regions to test
                     done = True
                     break
                     
@@ -216,8 +216,8 @@ def connected( data, data_wh, threshold ):
 
             # we have a list of idxs to demote from the active list to the finished list
             for i in move_list:
-                reg_list[0].append( reg_list[1][i] )
-                reg_list[1].remove( i )
+                reg_list[0].append( reg_list[1].pop( i ) )
+            # move reg_idx back to start of active region list
             reg_idx = 0
             
         # scan bright px
@@ -231,23 +231,64 @@ def connected( data, data_wh, threshold ):
         
         # find a region that could plausably touch this scanline
         # TODO: What if this is first Region?
-        while( reg_list[reg_idx].sl_x > tmp_reg.sl_m ):
-            reg_idx += 1
-        # can tmp_reg touch it
+        reg_len = len( reg_list[1] )
+        connecting = reg_len > 0
+        merge_target = -1
+        mode = "MERGE" # or INSERT
+        while( connecting ):
+            if( reg_list1[1][reg_idx].sl_x > tmp_reg.sl_m ):
+                reg_idx += 1
+                if( reg_idx == reg_len ):
+                    # we want to insert at reg_idx
+                    connecting = False
+                    mode = "INSERT"
+            else:
+                connecting = False
+                
+        # it could touch, but make sure we havent fallen off the end
+        if( reg_list1[1][reg_idx].sl_m <= tmp_reg.sl_x ):
+            # merge temp into ri, then see if ri+1 is touched by tmp
+            pass
+        else:
+            # test ri+1 for a merge
+            if( reg_list1[1][reg_idx+1].sl_x <= tmp_reg.sl_m ):
+                # merge into ri+1
+                pass
+            else:
+                # insert between ri and ri+1
+                pass
+                
+        
         """
-        We're only interested in 4-connected Neighbours
-        some possible scanline configurations
+        # We're only interested in 4-connected Neighbours
         
               --     --     ---    --
              ---    ----    ---    ---
             ---      --     ---     --
-            
+        
+        
+        # Globbed Markers
+        
+              --  --
+             ----.---   
+              --  --
+        
+        
+        # region scanning notes
+        
+              ri         ri+1  
+            x----m      x----m
+                 x---m
+                  tmp
+        
         """
         # merge
         # otherwise this is a new region
         new_reg = Region()
         new_reg.push( tmp_reg.sl_x, tmp_reg.sl_n, tmp_reg.sl_m )
-        reg_list.append( new_reg )
+        reg_list.insert( reg_idx, new_reg )
+        # Go back to sckipping dark Px
+        
     # we can only be here if we've ended
     return reg_list
     
