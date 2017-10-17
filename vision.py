@@ -239,7 +239,7 @@ def connected( data, data_wh, threshold ):
             if( reg_list1[1][reg_idx].sl_x > tmp_reg.sl_m ):
                 reg_idx += 1
                 if( reg_idx == reg_len ):
-                    # we want to insert at reg_idx
+                    # we want to insert at the end (reg_idx)
                     connecting = False
                     mode = "INSERT"
             else:
@@ -248,7 +248,7 @@ def connected( data, data_wh, threshold ):
         # it could touch, but make sure we havent fallen off the end
         if( reg_list1[1][reg_idx].sl_m <= tmp_reg.sl_x ):
             # merge temp into ri, then see if ri+1 is touched by tmp
-            pass
+            mode = "MERGE"
         else:
             # test ri+1 for a merge
             if( reg_list1[1][reg_idx+1].sl_x <= tmp_reg.sl_m ):
