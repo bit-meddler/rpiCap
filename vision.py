@@ -28,9 +28,9 @@ import numpy as np
 
 class Region( object ):
     # touching flags
-    NOTOUCH = 0
-    NORTH   = 1 # BINARY
-    SOUTH   = 2
+    NON   = 0
+    NORTH = 1 # BINARY
+    SOUTH = 2
     
     def __init__( self ):
         # bounding box
@@ -40,7 +40,7 @@ class Region( object ):
         self.sl_x, self.sl_m =   0,   0 # LAST hot line of this region
         self.sl_n            =   0      # y index of last scanline
         # touching
-        self.touching        = NOTOUCH  # if on a North/South boundary
+        self.touching        = self.NON # if on a North/South boundary
         
         
     def reset( self ):
@@ -48,10 +48,11 @@ class Region( object ):
         self.bb_m, self.bb_n =   0,   0
         self.sl_x, self.sl_m =   0,   0
         self.sl_n            =   0
-        self.touching        = NOTOUCH
+        self.touching        = self.NON
         
         
     def push( self, x, y, m ):
+        # DEPRICATED!!
         # grow BB
         self.bb_x = min( x, self.bb_x )
         self.bb_y = min( y, self.bb_y )
@@ -64,20 +65,24 @@ class Region( object ):
     def merge( self, other ):
         # combine regions self & other
         # expand BB
-        self.bb_x = min( other.x, self.bb_x )
-        self.bb_y = min( other.y, self.bb_y )
-        self.bb_m = max( other.m, self.bb_m )
-        self.bb_n = max( other.n, self.bb_n )
+        self.bb_x = min( other.bb_x, self.bb_x )
+        self.bb_y = min( other.bb_y, self.bb_y )
+        self.bb_m = max( other.bb_m, self.bb_m )
+        self.bb_n = max( other.bb_n, self.bb_n )
         # merge touching status
         self.touching |= other.touching
-        # keep orig scanline
+        # take incomming scanline
+        self.sl_x = other.sl_x
+        self.sl_m = other.sl_m
+        self.sl_n = other.sl_n
+        
         
         
 class SIMDsim( object ):
     """ This is a bit cruddy, but the idea is to simulate what we'd get with a
         few NEON commands.  Switching width (8/16) easily acomplished. """
     
-    WIDTH   = 16 # Simulate 128-Bit Vector pipeline, or 64-Bit mode
+    WIDTH   = 8 # Simulate 128-Bit Vector pipeline, or 64-Bit mode
     _INDEXS = tuple( range( WIDTH ) ) # conveniance
     
     
@@ -85,20 +90,20 @@ class SIMDsim( object ):
         pass
         
         
-    @classmethod
+    @staticmethod
     def wideGTE( data, comparison ):
-        ret = [ 0 for _ in self._INDEXS ]
-        for i in self._INDEXS:
+        ret = [ 0 for _ in SIMDsim._INDEXS ]
+        for i in SIMDsim._INDEXS:
             ret[i] = (data[i] >= comparison[i])
         return ret
         
         
-    @classmethod
+    @staticmethod
     def wideFlood( val ):
-        return [ val for _ in self._INDEXS ]
+        return [ val for _ in SIMDsim._INDEXS ]
     
     
-    @classmethod
+    @staticmethod
     def anyTrue( data ):
         for val in data:
             if val == True:
@@ -106,10 +111,10 @@ class SIMDsim( object ):
         return False
         
         
-    @classmethod
+    @staticmethod
     def idxOfTrue( data ):
         # I don't even know if this exists
-        for i in self._INDEXS:
+        for i in SIMDsim._INDEXS:
             if data[i]:
                 return i
         return -1
@@ -124,7 +129,7 @@ def connected( data, data_wh, threshold ):
         desired output:
             list of x,y -> m,n regions - a bounding box enclosing a 'Blob'
     """
-    
+    print data_wh
     d_w, d_h    = data_wh   # image extents
     idx         = 0         # index into data
     reg_idx     = 0         # index of last region in the region list
@@ -147,142 +152,153 @@ def connected( data, data_wh, threshold ):
     # BEGIN
     while( not ended ):
         # prep
-        align_offset = idx % align
+        align_offset = idx % align # problem soaking up the last bytes...
         skipping     = True
+        scanning     = False
         vec_res      = simd.wideFlood( False )
         
         # skipping
         # ########
         # advance by single bytes, till we are in alignment
+        print "align", align_offset, idx, ended
         for i in range( align_offset ):
             # possibly needs an ended test...
             idx += 1
             if( data[idx] >= threshold ):
                 # got one !
-                skipping   = False
-                vec_res[idx] = True # Needed??
+                skipping     = False
+                scanning     = True
                 break
-        # skip over dark px, byte aligned        
-        ended = (idx > data_out)
+        # skip over dark px, byte aligned
+        # TODO: what if remnants are not boundery aligned
+        if( (not scanning) and ((data_out - idx) <= vec_width) ):
+            skipping = False
+        ended = (idx >= data_out)
+        print ended, idx, data_out
         while( skipping and not ended ):
+            print idx
             vec_res = simd.wideGTE( data[idx:idx+vec_width], vec_th )
             v_idx = simd.idxOfTrue( vec_res )
             if( v_idx > 0 ):
                 #found one
                 skipping = False
+                scanning = True
                 idx += v_idx
                 break
             idx += vec_width
             ended = (idx > data_out)
+            if( (data_out - idx) <= vec_width ):
+                skipping = False
+                scanning = True
         # either we're out of data, or we've found a bright line
         if( ended ):
             return reg_list
-        # we have a bright pixel, so start...
-        
-        # Scanning
-        # ########
-        tmp_reg.reset()
-        # compute scanline x,y position in rectilinear image
-        tmp_reg.sl_x, tmp_reg.sl_n = divmod( idx, d_w )
-        line_end = (tmp_reg.sl_n+1) * d_h # check we don't looop
-        # housekeeping...
-        if( tmp_reg.sl_n > last_y ):
-            # Tidy list of found regions if we've advanced a line
-            # reset reg_idx to begining of active list
-            last_y = tmp_reg.sl_n
-            
-            touching_y = last_y - 1 # y of a scanline that can tocuh the current scanline
-            # A bit hokey, but it will work
-            done = False
-            reg_inspect = 0
-            move_list = [] # idxs of active reg list to move to inactive
-            while( not done ):
-                # maybe go through the list backwards, bubbling non-touching regions up to
-                # reg_start++ ?  Like a gnome sort??  Would happen in place to a 1D list
-                candidates = len( reg_list[1] )
-                if( candidates < 1 ):
-                    # out of candidates, need to append to reg_list
-                    done = True
-                    break
-                if( reg_inspect >= candidates ):
-                    # runout of regions to test
-                    done = True
-                    break
-                    
-                if reg_list[1][reg_inspect].sl_n != touching_y:
-                    # this region can't touch the line, drop it
-                    move_list.append( reg_inspect )
-                    reg_inspect += 1
-                else:
-                    # keep this in the active list, move inspection idx along
-                    reg_inspect += 1
 
-            # we have a list of idxs to demote from the active list to the finished list
-            for i in move_list:
-                reg_list[0].append( reg_list[1].pop( i ) )
-            # move reg_idx back to start of active region list
-            reg_idx = 0
+        if( scanning ):
+            # Scanning
+            # ########
+            tmp_reg.reset()
+            # compute scanline x,y position in rectilinear image
+            tmp_reg.sl_x, tmp_reg.sl_n = divmod( idx, d_w )
+            line_end = (tmp_reg.sl_n+1) * d_h # check we don't looop
+            # housekeeping...
+            if( tmp_reg.sl_n > last_y ):
+                # Tidy list of found regions if we've advanced a line
+                # reset reg_idx to begining of active list
+                last_y = tmp_reg.sl_n
+                
+                touching_y = last_y - 1 # y of a scanline that can tocuh the current scanline
+                # A bit hokey, but it will work
+                done = False
+                reg_inspect = 0
+                move_list = [] # idxs of active reg list to move to inactive
+                while( not done ):
+                    # maybe go through the list backwards, bubbling non-touching regions up to
+                    # reg_start++ ?  Like a gnome sort??  Would happen in place to a 1D list
+                    candidates = len( reg_list[1] )
+                    if( candidates < 1 ):
+                        # out of candidates, need to append to reg_list
+                        done = True
+                        break
+                    if( reg_inspect >= candidates ):
+                        # runout of regions to test
+                        done = True
+                        break
+                        
+                    if reg_list[1][reg_inspect].sl_n != touching_y:
+                        # this region can't touch the line, drop it
+                        move_list.append( reg_inspect )
+                        reg_inspect += 1
+                    else:
+                        # keep this in the active list, move inspection idx along
+                        reg_inspect += 1
+
+                # we have a list of idxs to demote from the active list to the finished list
+                for i in move_list:
+                    reg_list[0].append( reg_list[1].pop( i ) )
+                # move reg_idx back to start of active region list
+                reg_idx = 0
+                
+            # scan bright px, break if we go round the corner to the next row which
+            # happens to have a hot px at [y][0] (rare)
+            while( (data[idx] >= threshold) and (line_end > idx) ):
+                idx += 1
+            tmp_reg.sl_m = idx - 1 # last bright px
+        
+            # Connecting
+            # ##########
+            # check for tmp_reg's scanline conection to existing regions
             
-        # scan bright px, break if we go round the corner to the next row which
-        # happens to have a hot px at [y][0] (rare)
-        while( (data[idx] >= threshold) and (line_end > idx) ):
-            idx += 1
-        tmp_reg.sl_m = idx - 1 # last bright px
-        
-        # Connecting
-        # ##########
-        # check for tmp_reg's scanline conection to existing regions
-        
-        # find a region that could plausably touch this scanline
-        reg_len = len( reg_list[1] )
-        # If this is first Region, we skip this phase
-        connecting = reg_len > 0
-        merge_target = -1
-        while( connecting ):
-            if( reg_list[1][reg_idx].sl_m < tmp_reg.sl_x ):
-                # ri is behind tmp, move on
-                reg_idx += 1
-                if( reg_idx == reg_len ):
-                    # we want to insert at the end (reg_idx)
+            # find a region that could plausably touch this scanline
+            reg_len = len( reg_list[1] )
+            # If this is first Region, we skip this phase
+            connecting = reg_len > 0
+            merge_target = -1
+            while( connecting ):
+                if( reg_list[1][reg_idx].sl_m < tmp_reg.sl_x ):
+                    # ri is behind tmp, move on
+                    reg_idx += 1
+                    if( reg_idx == reg_len ):
+                        # we want to insert at the end (reg_idx)
+                        connecting = False
+                elif( reg_list[1][reg_idx].sl_m == tmp_reg.sl_x ):
+                    # tmp starts somewhere in this region
+                    merge_target = reg_idx
                     connecting = False
-            elif( reg_list[1][reg_idx].sl_m == tmp_reg.sl_x ):
-                # tmp starts somewhere in this region
-                merge_target = reg_idx
-                connecting = False
-            else:
-                # insert before ri
-                connecting = False
+                else:
+                    # insert before ri
+                    connecting = False
 
-        if( merge_target < 0 ):
-            # insert at reg_idx
-            new_reg = deepcopy( tmp_reg )
-            reg_list[1].insert( reg_idx, new_reg )
-        else:
-            # merge with merge_target
-            reg_list[1][reg_idx].merge( tmp_reg )
-                
-        # Now see if tmp extends into subsequent regions
-        reg_len = len( reg_list[1] )
-        # are there regions to try and merge into?
-        merging = (reg_len > 0) and (reg_idx!=(reg_len-1))
-        # This is good for a W shaped Glob, but how do we handle M shaped ones?
-        # The fact it extends is lost when we update the scanline.
-        # I'm trying to avoid writing an ID number back to the Image
-        while( merging ):
-            if( reg_list[1][reg_idx+1].sl_x < tmp_reg.sl_m ):
-                # merge this line in
-                reg_list[1][reg_idx].merge( reg_list[1][reg_idx+1] )
-                del reg_list[1][reg_idx+1]
-                reg_len = len( reg_list[1] )
-                if( reg_idx == ( reg_len - 1 ):
-                    # reached the end of the list
-                    merging = False
-                pass
+            if( merge_target < 0 ):
+                # insert at reg_idx
+                new_reg = deepcopy( tmp_reg )
+                reg_list[1].insert( reg_idx, new_reg )
             else:
-                # can't reach the next region
-                merging = False
-                
-        # I think we're done!
+                # merge with merge_target
+                reg_list[1][reg_idx].merge( tmp_reg )
+                    
+            # Now see if tmp extends into subsequent regions
+            reg_len = len( reg_list[1] )
+            # are there regions to try and merge into?
+            merging = (reg_len > 0) and (reg_idx != (reg_len-1))
+            # This is good for a W shaped Glob, but how do we handle M shaped ones?
+            # The fact it extends is lost when we update the scanline.
+            # I'm trying to avoid writing an ID number back to the Image
+            while( merging ):
+                if( reg_list[1][reg_idx+1].sl_x < tmp_reg.sl_m ):
+                    # merge this line in
+                    reg_list[1][reg_idx].merge( reg_list[1][reg_idx+1] )
+                    del reg_list[1][reg_idx+1]
+                    reg_len = len( reg_list[1] )
+                    if( reg_idx == ( reg_len - 1 ) ):
+                        # reached the end of the list
+                        merging = False
+                    pass
+                else:
+                    # can't reach the next region
+                    merging = False
+            print len( reg_list[0] ), len( reg_list[1] )
+            # I think we're done!
         """
         # We're only interested in 4-connected Neighbours
         
