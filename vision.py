@@ -22,6 +22,7 @@ x,y is the start of a region, m,n is the end:
   and n is the same for a col starting at y
   
 """
+from copy import deepcopy
 import numpy as np
 
 
@@ -47,7 +48,7 @@ class Region( object ):
         self.bb_m, self.bb_n =   0,   0
         self.sl_x, self.sl_m =   0,   0
         self.sl_n            =   0
-        self.touching        =   0
+        self.touching        = NOTOUCH
         
         
     def push( self, x, y, m ):
@@ -233,40 +234,52 @@ def connected( data, data_wh, threshold ):
         # check for tmp_reg's scanline conection to existing regions
         
         # find a region that could plausably touch this scanline
-        # TODO: What if this is first Region?
         reg_len = len( reg_list[1] )
+        # If this is first Region, we skip this phase
         connecting = reg_len > 0
         merge_target = -1
-        mode = "MERGE" # or INSERT
         while( connecting ):
-            if( reg_list1[1][reg_idx].sl_m < tmp_reg.sl_x ):
+            if( reg_list[1][reg_idx].sl_m < tmp_reg.sl_x ):
                 # ri is behind tmp, move on
                 reg_idx += 1
                 if( reg_idx == reg_len ):
                     # we want to insert at the end (reg_idx)
                     connecting = False
-                    mode = "INSERT"
-            elif( reg_list1[1][reg_idx].sl_m == tmp_reg.sl_x ):
+            elif( reg_list[1][reg_idx].sl_m == tmp_reg.sl_x ):
                 # tmp starts somewhere in this region
-                mode = "MERGE"
+                merge_target = reg_idx
                 connecting = False
             else:
                 # insert before ri
                 connecting = False
-                mode = "INSERT"
+
+        if( merge_target < 0 ):
+            # insert at reg_idx
+            new_reg = deepcopy( tmp_reg )
+            reg_list[1].insert( reg_idx, new_reg )
+        else:
+            # merge with merge_target
+            reg_list[1][reg_idx].merge( tmp_reg )
                 
         # Now see if tmp extends into subsequent regions
         reg_len = len( reg_list[1] )
         # are there regions to try and merge into?
         merging = (reg_len > 0) and (reg_idx!=(reg_len-1))
+        # This is good for a W shaped Glob, but how do we handle M shaped ones?
+        # The fact it extends is lost when we update the scanline.
+        # I'm trying to avoid writing an ID number back to the Image
         while( merging ):
-            if( reg_list1[1][reg_idx+1].sl_x < tmp_reg.sl_m ):
+            if( reg_list[1][reg_idx+1].sl_x < tmp_reg.sl_m ):
                 # merge this line in
-                # del reg_list1[1][reg_idx+1]
-                # if( reg_idx!=( len( reg_list[1] ) -1 ):
-                # merging = False
+                reg_list[1][reg_idx].merge( reg_list[1][reg_idx+1] )
+                del reg_list[1][reg_idx+1]
+                reg_len = len( reg_list[1] )
+                if( reg_idx == ( reg_len - 1 ):
+                    # reached the end of the list
+                    merging = False
                 pass
             else:
+                # can't reach the next region
                 merging = False
                 
         # I think we're done!
@@ -283,7 +296,7 @@ def connected( data, data_wh, threshold ):
               --  --
              ----.---   
               --  --
-        
+        the . would be a 'saddle point' where there is a brightness gradient
         
         # region scanning notes
         
@@ -293,12 +306,7 @@ def connected( data, data_wh, threshold ):
                 tmp
         
         """
-        # merge
-        # otherwise this is a new region
-        new_reg = Region()
-        new_reg.push( tmp_reg.sl_x, tmp_reg.sl_n, tmp_reg.sl_m )
-        reg_list.insert( reg_idx, new_reg )
-        # Go back to sckipping dark Px
+        # Go back to skipping dark Pixels
         
     # we can only be here if we've ended
     return reg_list
