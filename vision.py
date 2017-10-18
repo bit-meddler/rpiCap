@@ -27,8 +27,9 @@ import numpy as np
 
 class Region( object ):
     # touching flags
-    NORTH = 1 # BINARY
-    SOUTH = 2
+    NOTOUCH = 0
+    NORTH   = 1 # BINARY
+    SOUTH   = 2
     
     def __init__( self ):
         # bounding box
@@ -38,7 +39,7 @@ class Region( object ):
         self.sl_x, self.sl_m =   0,   0 # LAST hot line of this region
         self.sl_n            =   0      # y index of last scanline
         # touching
-        self.touching        =   0      # if on a North/South boundary
+        self.touching        = NOTOUCH  # if on a North/South boundary
         
         
     def reset( self ):
@@ -68,7 +69,7 @@ class Region( object ):
         self.bb_n = max( other.n, self.bb_n )
         # merge touching status
         self.touching |= other.touching
-        # keep scanline, I assume self has found a contact with other
+        # keep orig scanline
         
         
 class SIMDsim( object ):
@@ -87,7 +88,7 @@ class SIMDsim( object ):
     def wideGTE( data, comparison ):
         ret = [ 0 for _ in self._INDEXS ]
         for i in self._INDEXS:
-            ret[i] = data[i] >= comparison[i]
+            ret[i] = (data[i] >= comparison[i])
         return ret
         
         
@@ -158,14 +159,14 @@ def connected( data, data_wh, threshold ):
             if( data[idx] >= threshold ):
                 # got one !
                 skipping   = False
-                vec_res[0] = True # Needed??
+                vec_res[idx] = True # Needed??
                 break
         # skip over dark px, byte aligned        
         ended = (idx > data_out)
         while( skipping and not ended ):
             vec_res = simd.wideGTE( data[idx:idx+vec_width], vec_th )
             v_idx = simd.idxOfTrue( vec_res )
-            if( v_idx < 0 ):
+            if( v_idx > 0 ):
                 #found one
                 skipping = False
                 idx += v_idx
@@ -182,6 +183,7 @@ def connected( data, data_wh, threshold ):
         tmp_reg.reset()
         # compute scanline x,y position in rectilinear image
         tmp_reg.sl_x, tmp_reg.sl_n = divmod( idx, d_w )
+        line_end = (tmp_reg.sl_n+1) * d_h # check we don't looop
         # housekeeping...
         if( tmp_reg.sl_n > last_y ):
             # Tidy list of found regions if we've advanced a line
@@ -220,8 +222,9 @@ def connected( data, data_wh, threshold ):
             # move reg_idx back to start of active region list
             reg_idx = 0
             
-        # scan bright px
-        while( data[idx] >= threshold ):
+        # scan bright px, break if we go round the corner to the next row which
+        # happens to have a hot px at [y][0] (rare)
+        while( (data[idx] >= threshold) and (line_end > idx) ):
             idx += 1
         tmp_reg.sl_m = idx - 1 # last bright px
         
@@ -236,29 +239,37 @@ def connected( data, data_wh, threshold ):
         merge_target = -1
         mode = "MERGE" # or INSERT
         while( connecting ):
-            if( reg_list1[1][reg_idx].sl_x > tmp_reg.sl_m ):
+            if( reg_list1[1][reg_idx].sl_m < tmp_reg.sl_x ):
+                # ri is behind tmp, move on
                 reg_idx += 1
                 if( reg_idx == reg_len ):
                     # we want to insert at the end (reg_idx)
                     connecting = False
                     mode = "INSERT"
-            else:
+            elif( reg_list1[1][reg_idx].sl_m == tmp_reg.sl_x ):
+                # tmp starts somewhere in this region
+                mode = "MERGE"
                 connecting = False
+            else:
+                # insert before ri
+                connecting = False
+                mode = "INSERT"
                 
-        # it could touch, but make sure we havent fallen off the end
-        if( reg_list1[1][reg_idx].sl_m <= tmp_reg.sl_x ):
-            # merge temp into ri, then see if ri+1 is touched by tmp
-            mode = "MERGE"
-        else:
-            # test ri+1 for a merge
-            if( reg_list1[1][reg_idx+1].sl_x <= tmp_reg.sl_m ):
-                # merge into ri+1
+        # Now see if tmp extends into subsequent regions
+        reg_len = len( reg_list[1] )
+        # are there regions to try and merge into?
+        merging = (reg_len > 0) and (reg_idx!=(reg_len-1))
+        while( merging ):
+            if( reg_list1[1][reg_idx+1].sl_x < tmp_reg.sl_m ):
+                # merge this line in
+                # del reg_list1[1][reg_idx+1]
+                # if( reg_idx!=( len( reg_list[1] ) -1 ):
+                # merging = False
                 pass
             else:
-                # insert between ri and ri+1
-                pass
+                merging = False
                 
-        
+        # I think we're done!
         """
         # We're only interested in 4-connected Neighbours
         
@@ -276,10 +287,10 @@ def connected( data, data_wh, threshold ):
         
         # region scanning notes
         
-              ri         ri+1  
-            x----m      x----m
-                 x---m
-                  tmp
+  
+          x-ri-m   x-ri+1-m
+               x---m
+                tmp
         
         """
         # merge
