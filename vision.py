@@ -259,23 +259,24 @@ def connected( data, data_wh, threshold ):
             # find a region that could plausably touch this scanline
             reg_len = len( reg_list[1] )
             # If this is first Region, we skip this phase
-            connecting = reg_len > 0
             merge_target = -1
-            while( connecting ):
+            while( reg_idx < (reg_len-1) ):
                 if( reg_list[1][reg_idx].sl_m < tmp_reg.sl_x ):
                     # ri is behind tmp, move on
                     reg_idx += 1
                     if( reg_idx == reg_len ):
                         # we want to insert at the end (reg_idx)
-                        connecting = False
-                elif( reg_list[1][reg_idx].sl_m == tmp_reg.sl_x ):
-                    # TODO: That can't be right!!!
+                        break
+                    else:
+                        continue
+                if( (reg_list[1][reg_idx].sl_x == tmp_reg.sl_m) or \ # just touches Left
+                    (tmp_reg.sl_x <= reg_list[1][reg_idx].sl_m)): # Just inside
                     # tmp starts somewhere in this region
                     merge_target = reg_idx
-                    connecting = False
+                    break
                 else:
-                    # insert before ri
-                    connecting = False
+                    # insert before region at ri
+                    break
 
             if( merge_target < 0 ):
                 # insert at reg_idx
