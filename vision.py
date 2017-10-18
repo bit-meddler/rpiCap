@@ -130,10 +130,35 @@ def connected( data, data_wh, threshold ):
     """
         Assuming data is a flat (unravelled) array of uint8 from a sensor of dimentions data_wh
         
-        skip data[i]<threshold, on encountering >= threshold do some processing
+        skip data[i]<threshold, on encountering data[i]>=threshold do some processing
         
         desired output:
             list of x,y -> m,n regions - a bounding box enclosing a 'Blob'
+        
+        'Classic' Connected components seeks to mark all pixels in a region.
+        we are interested in ID'ing a region, and then finding it's centroid
+        With a miss-shapen region, additional processing is needed Hough-Circles?
+        
+        Front 242 Method:
+            my new solution is based on misshearing "headhunter" By Front 242
+                https://www.youtube.com/watch?v=m1cRGVaJF7Y
+                
+            1) You lock the Target...
+            2) You Paint* the Line...
+            3) You slowly spread the Net...
+            4) You catch the man!
+                * actually bait
+                
+            1) So far so normal.  Skip Dark Pixels, till you Lock onto a bright one
+            2) Do Region scanning, matching the Region's scanline to the Target's
+            3)  if Master line > Target Line
+                    Advance along Y to the end of the "master line".
+                        cache the master-line before merging the Target scanline
+                        if there is another 'hot line' (or more) inside, create a new region for it (after Master region) but give it the master's ID, add ID to a _set_ of IDs to post-merge.
+                        Keep doing this till you reach end of master-line
+                else
+                    do region merging, eat subsequent regions till we reach the end of the Target scanline
+            4) as a Post processess, scan the region list and merge any regions with IDs in the set
     """
     print data_wh
     d_w, d_h    = data_wh   # image extents
