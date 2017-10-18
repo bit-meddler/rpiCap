@@ -27,10 +27,6 @@ import numpy as np
 
 
 class Region( object ):
-    # touching flags
-    NON   = 0
-    NORTH = 1 # BINARY
-    SOUTH = 2
     
     def __init__( self ):
         # bounding box
@@ -39,8 +35,8 @@ class Region( object ):
         # scanline
         self.sl_x, self.sl_m =   0,   0 # LAST hot line of this region
         self.sl_n            =   0      # y index of last scanline
-        # touching
-        self.touching        = self.NON # if on a North/South boundary
+        # ID
+        self.id              = 1e6
         
         
     def reset( self ):
@@ -48,8 +44,7 @@ class Region( object ):
         self.bb_m, self.bb_n =   0,   0
         self.sl_x, self.sl_m =   0,   0
         self.sl_n            =   0
-        self.touching        = self.NON
-        
+        self.id              = 1e6
         
     def push( self, x, y, m ):
         # DEPRICATED!!
@@ -69,14 +64,25 @@ class Region( object ):
         self.bb_y = min( other.bb_y, self.bb_y )
         self.bb_m = max( other.bb_m, self.bb_m )
         self.bb_n = max( other.bb_n, self.bb_n )
-        # merge touching status
-        self.touching |= other.touching
         # take incomming scanline
         self.sl_x = other.sl_x
         self.sl_m = other.sl_m
         self.sl_n = other.sl_n
+        # region id
+        self.id = min( other.id, self.id )
         
         
+class RegionFactory( object ):
+    # Factory to automanage region ids
+    def __init__( self ):
+        self.region_count  = 0
+
+        
+    def newRegion( self ):
+        new_reg = Region()
+        new_reg.id = self.region_count
+        self.region_count += 1
+
         
 class SIMDsim( object ):
     """ This is a bit cruddy, but the idea is to simulate what we'd get with a
@@ -139,7 +145,8 @@ def connected( data, data_wh, threshold ):
     tmp_reg     = Region()  # temporary region for comparison & mergin
     tmp_x, tmp_y= 0, 0      # temp x & y position of bright pixel
     data_in     = 0         # frame to begin scanning
-    data_out    = len( data )#frame to end scanning
+    data_out    = len(data) # frame to end scanning
+    factory     = RegionFactory() # Region Factory
     
     simd = SIMDsim()
     
@@ -262,6 +269,7 @@ def connected( data, data_wh, threshold ):
                         # we want to insert at the end (reg_idx)
                         connecting = False
                 elif( reg_list[1][reg_idx].sl_m == tmp_reg.sl_x ):
+                    # TODO: That can't be right!!!
                     # tmp starts somewhere in this region
                     merge_target = reg_idx
                     connecting = False
@@ -271,7 +279,8 @@ def connected( data, data_wh, threshold ):
 
             if( merge_target < 0 ):
                 # insert at reg_idx
-                new_reg = deepcopy( tmp_reg )
+                new_reg = factory.newRegion()
+                new_reg.merge( tmp_reg )
                 reg_list[1].insert( reg_idx, new_reg )
             else:
                 # merge with merge_target
@@ -281,12 +290,16 @@ def connected( data, data_wh, threshold ):
             reg_len = len( reg_list[1] )
             # are there regions to try and merge into?
             merging = (reg_len > 0) and (reg_idx != (reg_len-1))
-            # This is good for a W shaped Glob, but how do we handle M shaped ones?
-            # The fact it extends is lost when we update the scanline.
-            # I'm trying to avoid writing an ID number back to the Image
             while( merging ):
+                # meed to check behind, so we don't eat one of the M's legs
+                # by propogating the id, we can keep the legs
+                # this will require a 'region reconciliation' pass at the end
+                # also deal with gutterballs by scanning region list for bb's touching
+                # top or bottom line of the ROI we're inspecting
                 if( reg_list[1][reg_idx+1].sl_x < tmp_reg.sl_m ):
                     # merge this line in
+                    # TODO: preserve this Scanline, take 'above' regions's ID
+                    # DEPRICATED BELOW
                     reg_list[1][reg_idx].merge( reg_list[1][reg_idx+1] )
                     del reg_list[1][reg_idx+1]
                     reg_len = len( reg_list[1] )
