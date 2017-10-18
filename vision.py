@@ -267,8 +267,7 @@ def connected( data, data_wh, threshold ):
                     if( reg_idx == reg_len ):
                         # we want to insert at the end (reg_idx)
                         break
-                    else:
-                        continue
+
                 if( (reg_list[1][reg_idx].sl_x == tmp_reg.sl_m) or \ # just touches Left
                     (tmp_reg.sl_x <= reg_list[1][reg_idx].sl_m)): # Just inside
                     # tmp starts somewhere in this region
@@ -285,7 +284,7 @@ def connected( data, data_wh, threshold ):
                 reg_list[1].insert( reg_idx, new_reg )
             else:
                 # merge with merge_target
-                reg_list[1][reg_idx].merge( tmp_reg )
+                reg_list[1][merge_target].merge( tmp_reg )
                     
             # Now see if tmp extends into subsequent regions
             reg_len = len( reg_list[1] )
