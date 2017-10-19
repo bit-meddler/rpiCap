@@ -27,35 +27,36 @@ import numpy as np
 
 
 class Region( object ):
+
+    BIG_NUM = 10000 # bigger than expected image extents
+
     
     def __init__( self ):
         # bounding box
-        self.bb_x, self.bb_y = 1e6, 1e6 # big number, to fail min(x, bb_x)
-        self.bb_m, self.bb_n =   0,   0 # lo number, to fail max(x, bb_m)
+        self.bb_x, self.bb_y = self.BIG_NUM, self.BIG_NUM # to fail min(x, bb_x)
+        self.bb_m, self.bb_n =  0, 0 # lo number, to fail max(x, bb_m)
         # scanline
-        self.sl_x, self.sl_m =   0,   0 # LAST hot line of this region
-        self.sl_n            =   0      # y index of last scanline
+        self.sl_x, self.sl_m =  0, 0 # LAST hot line of this region
+        self.sl_n            =  0    # y index of last scanline
         # ID
-        self.id              = 1e6
+        self.id              = self.BIG_NUM
         
         
     def reset( self ):
-        self.bb_x, self.bb_y = 1e6, 1e6
-        self.bb_m, self.bb_n =   0,   0
-        self.sl_x, self.sl_m =   0,   0
-        self.sl_n            =   0
-        self.id              = 1e6
+        self.bb_x, self.bb_y = self.BIG_NUM, self.BIG_NUM
+        self.bb_m, self.bb_n =  0, 0
+        self.sl_x, self.sl_m =  0, 0
+        self.sl_n            =  0
+        self.id              = self.BIG_NUM
         
-    def push( self, x, y, m ):
-        # DEPRICATED!!
-        # grow BB
-        self.bb_x = min( x, self.bb_x )
-        self.bb_y = min( y, self.bb_y )
-        self.bb_m = max( y, self.bb_m )
-        self.bb_n = max( n, self.bb_n )
-        # update scanlline
-        self.sl_x, self.sl_m, self.sl_n = x, m, y
         
+    def update( self ):
+        # Update SL into the BB
+        self.bb_x = min( self.sl_x, self.bb_x )
+        self.bb_y = min( self.sl_n, self.bb_y )
+        self.bb_m = max( self.sl_m, self.bb_m )
+        self.bb_n = max( self.sl_n, self.bb_n )
+
         
     def merge( self, other ):
         # combine regions self & other
@@ -72,6 +73,13 @@ class Region( object ):
         self.id = min( other.id, self.id )
         
         
+    def __repr__( self ):
+        return "Region '{}' BB: {}-{}, {}-{}. SL: {}-{} @ {}".format(
+            self.id,   self.bb_x, self.bb_y, self.bb_m, self.bb_n,
+            self.sl_x, self.sl_m, self.sl_n
+        )
+        
+        
 class RegionFactory( object ):
     # Factory to automanage region ids
     def __init__( self ):
@@ -82,7 +90,8 @@ class RegionFactory( object ):
         new_reg = Region()
         new_reg.id = self.region_count
         self.region_count += 1
-
+        return new_reg
+        
         
 class SIMDsim( object ):
     """ This is a bit cruddy, but the idea is to simulate what we'd get with a
@@ -98,7 +107,7 @@ class SIMDsim( object ):
         
     @staticmethod
     def wideGTE( data, comparison ):
-        ret = [ 0 for _ in SIMDsim._INDEXS ]
+        ret = [ False for _ in SIMDsim._INDEXS ]
         for i in SIMDsim._INDEXS:
             ret[i] = (data[i] >= comparison[i])
         return ret
@@ -160,7 +169,6 @@ def connected( data, data_wh, threshold ):
                     do region merging, eat subsequent regions till we reach the end of the Target scanline
             4) as a Post processess, scan the region list and merge any regions with IDs in the set
     """
-    print data_wh
     d_w, d_h    = data_wh   # image extents
     idx         = 0         # index into data
     reg_idx     = 0         # index of last region in the region list
@@ -168,6 +176,7 @@ def connected( data, data_wh, threshold ):
     reg_list    = [[],[]]   # list of regions found so far 0=Can't possibly touch, 1=might touch
     last_y      = -1        # last y encountered, to see if we've skiped a line
     tmp_reg     = Region()  # temporary region for comparison & mergin
+    tmp_pos     = 0         # store of start idx of hot line
     tmp_x, tmp_y= 0, 0      # temp x & y position of bright pixel
     data_in     = 0         # frame to begin scanning
     data_out    = len(data) # frame to end scanning
@@ -175,16 +184,17 @@ def connected( data, data_wh, threshold ):
     
     simd = SIMDsim()
     
-    align       = 4         # 4-byte memory alignment
+    align       = simd.WIDTH# Align on Vec width modulus
     vec_width   = simd.WIDTH# simulate 128-Bit SIMD lanes (64-Bit)
     vec_th      = simd.wideFlood( threshold )# all threshold
     vec_res     = simd.wideFlood( False )
-    
+    sanity = {}
     ended = False
     # BEGIN
     while( not ended ):
         # prep
-        align_offset = idx % align # problem soaking up the last bytes...
+        # problem soaking up the last bytes...
+        align_offset = align - (idx % align)
         skipping     = True
         scanning     = False
         vec_res      = simd.wideFlood( False )
@@ -192,7 +202,14 @@ def connected( data, data_wh, threshold ):
         # skipping
         # ########
         # advance by single bytes, till we are in alignment
-        print "align", align_offset, idx, ended
+        # print "align", align_offset, idx, data_out, ended
+        i = idx + data_out
+        if not i in sanity:
+            sanity[i] = 0
+        sanity[i] += 1
+        if sanity[i] > 6:
+            exit(0)
+            
         for i in range( align_offset ):
             # possibly needs an ended test...
             idx += 1
@@ -206,12 +223,12 @@ def connected( data, data_wh, threshold ):
         if( (not scanning) and ((data_out - idx) <= vec_width) ):
             skipping = False
         ended = (idx >= data_out)
-        print ended, idx, data_out
+        
         while( skipping and not ended ):
-            print idx
+            print "skipping from:", idx
             vec_res = simd.wideGTE( data[idx:idx+vec_width], vec_th )
             v_idx = simd.idxOfTrue( vec_res )
-            if( v_idx > 0 ):
+            if( v_idx >= 0 ):
                 #found one
                 skipping = False
                 scanning = True
@@ -231,14 +248,15 @@ def connected( data, data_wh, threshold ):
             # ########
             tmp_reg.reset()
             # compute scanline x,y position in rectilinear image
-            tmp_reg.sl_x, tmp_reg.sl_n = divmod( idx, d_w )
-            line_end = (tmp_reg.sl_n+1) * d_h # check we don't looop
+            tmp_reg.sl_n, tmp_reg.sl_x = divmod( idx, d_w )
+            tmp_pos = idx
+            print "Housekeeping at", tmp_reg.sl_x, tmp_reg.sl_n, "From", idx
+            line_end = (tmp_reg.sl_n+1) * d_w # check we don't loop, LE==Exclusive
             # housekeeping...
             if( tmp_reg.sl_n > last_y ):
                 # Tidy list of found regions if we've advanced a line
                 # reset reg_idx to begining of active list
                 last_y = tmp_reg.sl_n
-                
                 touching_y = last_y - 1 # y of a scanline that can tocuh the current scanline
                 # A bit hokey, but it will work
                 done = False
@@ -273,10 +291,13 @@ def connected( data, data_wh, threshold ):
                 
             # scan bright px, break if we go round the corner to the next row which
             # happens to have a hot px at [y][0] (rare)
-            while( (data[idx] >= threshold) and (line_end > idx) ):
+            while( (line_end > idx) and (data[idx] >= threshold) ):
                 idx += 1
-            tmp_reg.sl_m = idx - 1 # last bright px
+            tmp_reg.sl_m = tmp_reg.sl_x + (idx - tmp_pos) # last bright px
         
+            # Finalize our region based on this scanline
+            tmp_reg.update()
+
             # Connecting
             # ##########
             # check for tmp_reg's scanline conection to existing regions
@@ -285,7 +306,7 @@ def connected( data, data_wh, threshold ):
             reg_len = len( reg_list[1] )
             # If this is first Region, we skip this phase
             merge_target = -1
-            while( reg_idx < (reg_len-1) ):
+            while( reg_idx <= (reg_len-1) ):
                 if( reg_list[1][reg_idx].sl_m < tmp_reg.sl_x ):
                     # ri is behind tmp, move on
                     reg_idx += 1
@@ -293,7 +314,7 @@ def connected( data, data_wh, threshold ):
                         # we want to insert at the end (reg_idx)
                         break
 
-                if( (reg_list[1][reg_idx].sl_x == tmp_reg.sl_m) or \ # just touches Left
+                if( (reg_list[1][reg_idx].sl_x == tmp_reg.sl_m) or \
                     (tmp_reg.sl_x <= reg_list[1][reg_idx].sl_m)): # Just inside
                     # tmp starts somewhere in this region
                     merge_target = reg_idx
@@ -315,6 +336,7 @@ def connected( data, data_wh, threshold ):
             reg_len = len( reg_list[1] )
             # are there regions to try and merge into?
             merging = (reg_len > 0) and (reg_idx != (reg_len-1))
+            print merging
             while( merging ):
                 # meed to check behind, so we don't eat one of the M's legs
                 # by propogating the id, we can keep the legs
@@ -335,7 +357,9 @@ def connected( data, data_wh, threshold ):
                 else:
                     # can't reach the next region
                     merging = False
-            print len( reg_list[0] ), len( reg_list[1] )
+                    
+            if( idx >= data_out ):
+                ended = True
             # I think we're done!
         """
         # We're only interested in 4-connected Neighbours
@@ -366,11 +390,21 @@ def connected( data, data_wh, threshold ):
     return reg_list
     
 # Tests
-a = ([10]*3 + [0]*3) * 3
-A = np.array(a).reshape(3,6)
+"""
+    0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15
+0 [10 10 10  0  0  0  0  0  0  0  0  0  0  0  0  0]
+1 [10 10 10  0  0  0  0  0  0  0  0  0  0  0  0  0]
+2 [10 10 10  0  0  0  0  0  0  0  0  0  0  0  0  0]
+3 [ 0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10]
+4 [ 0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10]
+5 [ 0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10]
+"""
+a = ([10]*3 + [0]*13) * 3
+A = np.array(a).reshape(3,-1)
 a.reverse()
-B = np.array(a).reshape(3,6)
+B = np.array(a).reshape(3,-1)
 test = np.vstack( [A,B] )
-shape = test.shape
-
+shape = test.T.shape #escape from Row Mjr !
+print test
 regs = connected( test.ravel(), shape, 5 )
+print regs
