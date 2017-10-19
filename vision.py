@@ -203,12 +203,9 @@ def connected( data, data_wh, threshold ):
         # ########
         # advance by single bytes, till we are in alignment
         # print "align", align_offset, idx, data_out, ended
-        i = idx + data_out
-        if not i in sanity:
-            sanity[i] = 0
-        sanity[i] += 1
-        if sanity[i] > 6:
-            exit(0)
+        if idx>1:
+            print idx
+            print reg_list
             
         for i in range( align_offset ):
             # possibly needs an ended test...
@@ -284,7 +281,8 @@ def connected( data, data_wh, threshold ):
                         reg_inspect += 1
 
                 # we have a list of idxs to demote from the active list to the finished list
-                for i in move_list:
+                print move_list
+                for i in reversed( move_list ):
                     reg_list[0].append( reg_list[1].pop( i ) )
                 # move reg_idx back to start of active region list
                 reg_idx = 0
@@ -399,12 +397,24 @@ def connected( data, data_wh, threshold ):
 4 [ 0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10]
 5 [ 0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10]
 """
+# Basic test
 a = ([10]*3 + [0]*13) * 3
 A = np.array(a).reshape(3,-1)
 a.reverse()
 B = np.array(a).reshape(3,-1)
 test = np.vstack( [A,B] )
-shape = test.T.shape #escape from Row Mjr !
 print test
-regs = connected( test.ravel(), shape, 5 )
+regs = connected( test.ravel(), test.T.shape, 5 )
+print regs
+
+
+# more complext regions
+A = np.zeros( (8,24), dtype=np.uint8 )
+B = np.ones( (3,3), dtype=np.uint8 ) * 10
+pos = ( (0,1), (0,5), (0,20), (4,3), (5, 19) )
+for y,x in pos:
+    A[y:y+3, x:x+3] = B
+test = A
+print test
+regs = connected( test.ravel(), test.T.shape, 5 )
 print regs
