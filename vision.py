@@ -175,6 +175,7 @@ def connected( data, data_wh, threshold ):
     reg_start   = 0         # index of first region touching current image line
     reg_list    = [[],[]]   # list of regions found so far 0=Can't possibly touch, 1=might touch
     last_y      = -1        # last y encountered, to see if we've skiped a line
+    row_end     = -1        # end of image row, so we don't have to divmod too much
     tmp_reg     = Region()  # temporary region for comparison & mergin
     tmp_pos     = 0         # store of start idx of hot line
     tmp_x, tmp_y= 0, 0      # temp x & y position of bright pixel
@@ -216,7 +217,6 @@ def connected( data, data_wh, threshold ):
                 scanning     = True
                 break
         # skip over dark px, byte aligned
-        # TODO: what if remnants are not boundery aligned
         if( (not scanning) and ((data_out - idx) <= vec_width) ):
             skipping = False
         ended = (idx >= data_out)
@@ -238,6 +238,7 @@ def connected( data, data_wh, threshold ):
                 scanning = True
         # either we're out of data, or we've found a bright line
         if( ended ):
+            # TODO: single exit, so we can reconcile any orphened merges.
             return reg_list
 
         if( scanning ):
@@ -245,16 +246,24 @@ def connected( data, data_wh, threshold ):
             # ########
             tmp_reg.reset()
             # compute scanline x,y position in rectilinear image
-            tmp_reg.sl_n, tmp_reg.sl_x = divmod( idx, d_w )
-            tmp_pos = idx
-            print "Housekeeping at", tmp_reg.sl_x, tmp_reg.sl_n, "From", idx
-            line_end = (tmp_reg.sl_n+1) * d_w # check we don't loop, LE==Exclusive
+            if( idx > row_end ):
+                # recompute
+                tmp_y, tmp_x = divmod( idx, d_w )
+                row_start    = tmp_y * d_w
+                row_end      = (tmp_y+1) * d_w
+            else:
+                tmp_x        = idx - row_start
+                
+            tmp_reg.sl_n, tmp_reg.sl_x = tmp_y, tmp_x
+            
+            print "Housekeeping at", tmp_x, tmp_y, "From", idx
+            
             # housekeeping...
-            if( tmp_reg.sl_n > last_y ):
+            if( tmp_y > last_y ):
                 # Tidy list of found regions if we've advanced a line
                 # reset reg_idx to begining of active list
-                last_y = tmp_reg.sl_n
-                touching_y = last_y - 1 # y of a scanline that can tocuh the current scanline
+                last_y = tmp_y
+                touching_y = last_y - 1 # y of a scanline that can touch the current scanline
                 # A bit hokey, but it will work
                 done = False
                 reg_inspect = 0
@@ -289,9 +298,9 @@ def connected( data, data_wh, threshold ):
                 
             # scan bright px, break if we go round the corner to the next row which
             # happens to have a hot px at [y][0] (rare)
-            while( (line_end > idx) and (data[idx] >= threshold) ):
+            while( (row_end > idx) and (data[idx] >= threshold) ):
                 idx += 1
-            tmp_reg.sl_m = tmp_reg.sl_x + (idx - tmp_pos) # last bright px
+            tmp_reg.sl_m = (idx - row_start) # last bright px
         
             # Finalize our region based on this scanline
             tmp_reg.update()
@@ -304,14 +313,23 @@ def connected( data, data_wh, threshold ):
             reg_len = len( reg_list[1] )
             # If this is first Region, we skip this phase
             merge_target = -1
-            while( reg_idx <= (reg_len-1) ):
+            while( reg_idx != reg_len ):
                 if( reg_list[1][reg_idx].sl_m < tmp_reg.sl_x ):
                     # ri is behind tmp, move on
                     reg_idx += 1
-                    if( reg_idx == reg_len ):
-                        # we want to insert at the end (reg_idx)
-                        break
 
+            # this should be the beginning of the merging process
+            merging = True
+            if( reg_idx == reg_len ):
+                # Insert at end, no more merging needed
+                new_reg = factory.newRegion()
+                new_reg.merge( tmp_reg )
+                reg_list[1].insert( reg_idx, new_reg )
+                merging = False
+                
+            while( merging ):
+            	# Merging needs a rewrite, but this is better.
+            	# TODO: Merging, with Front 242 Algo.
                 if( (reg_list[1][reg_idx].sl_x == tmp_reg.sl_m) or \
                     (tmp_reg.sl_x <= reg_list[1][reg_idx].sl_m)): # Just inside
                     # tmp starts somewhere in this region
@@ -321,21 +339,19 @@ def connected( data, data_wh, threshold ):
                     # insert before region at ri
                     break
 
-            if( merge_target < 0 ):
-                # insert at reg_idx
-                new_reg = factory.newRegion()
-                new_reg.merge( tmp_reg )
-                reg_list[1].insert( reg_idx, new_reg )
-            else:
-                # merge with merge_target
-                reg_list[1][merge_target].merge( tmp_reg )
+                if( merge_target < 0 ):
+                    # insert at reg_idx
+                    new_reg = factory.newRegion()
+                    new_reg.merge( tmp_reg )
+                    reg_list[1].insert( reg_idx, new_reg )
+                else:
+                    # merge with merge_target
+                    reg_list[1][merge_target].merge( tmp_reg )
                     
-            # Now see if tmp extends into subsequent regions
-            reg_len = len( reg_list[1] )
-            # are there regions to try and merge into?
-            merging = (reg_len > 0) and (reg_idx != (reg_len-1))
-            print merging
-            while( merging ):
+                # Now see if tmp extends into subsequent regions
+                reg_len = len( reg_list[1] )
+                # are there regions to try and merge into?
+            	merging = (reg_len > 0) and (reg_idx != (reg_len-1))
                 # meed to check behind, so we don't eat one of the M's legs
                 # by propogating the id, we can keep the legs
                 # this will require a 'region reconciliation' pass at the end
@@ -351,7 +367,6 @@ def connected( data, data_wh, threshold ):
                     if( reg_idx == ( reg_len - 1 ) ):
                         # reached the end of the list
                         merging = False
-                    pass
                 else:
                     # can't reach the next region
                     merging = False
