@@ -176,7 +176,6 @@ def connected( data, data_wh, threshold ):
     reg_list    = [[],[]]   # list of regions found so far 0=Can't possibly touch, 1=might touch
     last_y      = -1        # last y encountered, to see if we've skiped a line
     row_end     = -1        # end of image row, so we don't have to divmod too much
-    tmp_reg     = Region()  # temporary region for comparison & mergin
     tmp_pos     = 0         # store of start idx of hot line
     tmp_x, tmp_y= 0, 0      # temp x & y position of bright pixel
     data_in     = 0         # frame to begin scanning
@@ -184,6 +183,8 @@ def connected( data, data_wh, threshold ):
     factory     = RegionFactory() # Region Factory
     
     simd = SIMDsim()
+    tmp_reg     = Region()  # temporary region for comparison & mergin
+    master_line = Region()  # Cache of Merge target's scanline for 242
     
     align       = simd.WIDTH# Align on Vec width modulus
     vec_width   = simd.WIDTH# simulate 128-Bit SIMD lanes (64-Bit)
@@ -308,7 +309,7 @@ def connected( data, data_wh, threshold ):
             # Connecting
             # ##########
             # check for tmp_reg's scanline conection to existing regions
-            
+            # Only Advance the Reg idx here
             # find a region that could plausably touch this scanline
             reg_len = len( reg_list[1] )
             # If this is first Region, we skip this phase
@@ -319,6 +320,7 @@ def connected( data, data_wh, threshold ):
                     reg_idx += 1
 
             # this should be the beginning of the merging process
+            master_line.reset()
             merging = True
             if( reg_idx == reg_len ):
                 # Insert at end, no more merging needed
@@ -326,6 +328,7 @@ def connected( data, data_wh, threshold ):
                 new_reg.merge( tmp_reg )
                 reg_list[1].insert( reg_idx, new_reg )
                 merging = False
+                # Bail out?
                 
             while( merging ):
             	# Merging needs a rewrite, but this is better.
@@ -345,7 +348,8 @@ def connected( data, data_wh, threshold ):
                     new_reg.merge( tmp_reg )
                     reg_list[1].insert( reg_idx, new_reg )
                 else:
-                    # merge with merge_target
+                    # merge with merge_target, store origenal Scanline
+                    master_line.merge( reg_list[1][merge_target] )
                     reg_list[1][merge_target].merge( tmp_reg )
                     
                 # Now see if tmp extends into subsequent regions
@@ -357,6 +361,18 @@ def connected( data, data_wh, threshold ):
                 # this will require a 'region reconciliation' pass at the end
                 # also deal with gutterballs by scanning region list for bb's touching
                 # top or bottom line of the ROI we're inspecting
+                """
+                    There are two key merge conditions, W and M
+                    
+                    ---   ----   ----
+                     ----tmp_reg---
+                     
+                     
+                     ---temp_reg----
+                    ---    ---    ----
+                    
+                    
+                """
                 if( reg_list[1][reg_idx+1].sl_x < tmp_reg.sl_m ):
                     # merge this line in
                     # TODO: preserve this Scanline, take 'above' regions's ID
@@ -370,7 +386,8 @@ def connected( data, data_wh, threshold ):
                 else:
                     # can't reach the next region
                     merging = False
-                    
+                # increment reg_idx to soak up W globs
+                
             if( idx >= data_out ):
                 ended = True
             # I think we're done!
