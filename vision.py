@@ -20,7 +20,13 @@ x,y is the start of a region, m,n is the end:
 
   so m is a short hand for extend of a row begining at x
   and n is the same for a col starting at y
+
+Interesting:
+    https://www.youtube.com/watch?v=AAbUfZD_09s
+    https://users.cs.cf.ac.uk/Paul.Rosin/resources/papers/Hu-circularity-PR-postprint.pdf
   
+Other observations
+    circularity = 4pi(area/perimeter^2)
 """
 from copy import deepcopy
 import numpy as np
@@ -257,16 +263,15 @@ def connected( data, data_wh, threshold ):
             tmp_reg.reset()
             # compute scanline x,y position in rectilinear image
             if( idx > row_end ):
-                # recompute
                 tmp_y, tmp_x = divmod( idx, d_w )
                 row_start    = tmp_y * d_w
-                row_end      = (tmp_y+1) * d_w
+                row_end      = (tmp_y+1) * d_w # this row in a rect image
             else:
-                tmp_x        = idx - row_start
+                tmp_x        = idx - row_start # Still in the same row
                 
             tmp_reg.sl_n, tmp_reg.sl_x = tmp_y, tmp_x
             
-            print "Housekeeping at", tmp_x, tmp_y, "From", idx
+            print "Housekeeping test at", tmp_x, tmp_y, "From", idx
             
             # housekeeping...
             if( tmp_y > last_y ):
@@ -284,10 +289,13 @@ def connected( data, data_wh, threshold ):
                     reg_scan += 1
                 reg_start = reg_idx
                 last_y = tmp_y
-                
-            # scan bright px, break if we go round the corner to the next row which
+            
+            # Scan bright px, break if we go round the corner to the next row which
             # happens to have a hot px at [y][0] (rare)
+            # idx is the FIRST bright px
             while( (row_end > idx) and (data[idx] >= threshold) ):
+                # If we collect statistics durring this process, here's the place to do it
+                # that will be 4 or 5 values that could be 32-bit (int or fp)
                 idx += 1
             tmp_reg.sl_m = (idx - row_start) # last bright px
         
