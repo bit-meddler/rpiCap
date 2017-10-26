@@ -28,38 +28,57 @@ class MiniReg( object ):
 
 
 """
+reg_idx, reg_start, last_y = -1, -1, -1
+
+
+def tidy1( reg_list ):
+    global reg_idx, reg_start, last_y
+    
+    # New method
+    reg_scan = reg_start
+    reg_idx  = reg_start
+    reg_len  = len( reg_list )
+    while( reg_scan < reg_len ):
+        # print "--"
+        # print "ri: {}, rs:{}".format( reg_idx, reg_scan ) 
+        # retire this region, it can't touch
+        if( reg_list[ reg_scan ].sl_n == last_y ):
+            # can we do this in place?
+            reg_list.insert( reg_idx, reg_list.pop( reg_scan ) )
+            reg_idx += 1
+        reg_scan += 1
+        # print "ri: {}, rs:{}".format( reg_idx, reg_scan ) 
+        # show( reg_list )        
+    reg_start = reg_idx
+    
+
 def show( rl ):
     txt = ""
     for r in rl:
-        txt += (str( r.id ) + ", ")
+        txt += "{}@{}, ".format( r.id, r.sl_n )
     print txt[:-2]
 
 test1 = ( (5,6,13, 1), (9,10,14, 2), (13,14,13, 3), (17,18,13, 4), (21,22,14, 5) )
 reg_list = []
 for x, m, n, id in test1:
     reg_list.append( MiniReg( x, m, n, id ) )
-
-print reg_list
+show( reg_list )
 
 last_y = 13
 reg_start = 0
 reg_idx = 4
 
-# New method
-reg_scan = reg_start
-reg_idx  = reg_start
-reg_len  = len( reg_list )
-while( reg_scan < reg_len ):
-    print "--"
-    print "ri: {}, rs:{}".format( reg_idx, reg_scan ) 
-    # retire this region, it can't touch
-    if( reg_list[ reg_scan ].sl_n == last_y ):
-        # can we do this in place?
-        reg_list.insert( reg_idx, reg_list.pop( reg_scan ) )
-        reg_idx += 1
-    reg_scan += 1
-    print "ri: {}, rs:{}".format( reg_idx, reg_scan ) 
-    show( reg_list )
-    
-reg_start = reg_idx
-print reg_list
+tidy1( reg_list )
+show( reg_list )
+
+# add new stuff
+# update
+reg_list[4].sl_n = 15
+reg_list.insert( reg_idx, MiniReg( 2,5,15,6 ) )
+reg_list.insert( 4, MiniReg( 12,15,15,7 ) )
+show( reg_list )
+
+last_y = 14
+
+tidy1( reg_list )
+show( reg_list )

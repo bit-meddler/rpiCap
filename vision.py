@@ -133,8 +133,17 @@ class SIMDsim( object ):
             if data[i]:
                 return i
         return -1
-        
-        
+    
+    
+def regReconcile( reg_list, reg_lut ):
+    """
+        Notionally, we record mergable regions and preserve the scanlines
+        Now we need to merge them into one RoI.
+        LUT is source_id : target_id
+    """
+    return reg_list
+    
+    
 def connected( data, data_wh, threshold ):
     """
         Assuming data is a flat (unravelled) array of uint8 from a sensor of dimentions data_wh
@@ -173,7 +182,8 @@ def connected( data, data_wh, threshold ):
     idx         = 0         # index into data
     reg_idx     = 0         # index of last region in the region list
     reg_start   = 0         # index of first region touching current image line
-    reg_list    = [[],[]]   # list of regions found so far 0=Can't possibly touch, 1=might touch
+    reg_list    = []        # list of regions found so far, impossible regions bubble to left of reg_start
+    reg_lut     = {}        # LUT of region IDs that need to be merged
     last_y      = -1        # last y encountered, to see if we've skiped a line
     row_end     = -1        # end of image row, so we don't have to divmod too much
     tmp_pos     = 0         # store of start idx of hot line
@@ -239,8 +249,7 @@ def connected( data, data_wh, threshold ):
                 scanning = True
         # either we're out of data, or we've found a bright line
         if( ended ):
-            # TODO: single exit, so we can reconcile any orphened merges.
-            return reg_list
+            return regReconcile( reg_list, reg_lut )
 
         if( scanning ):
             # Scanning
@@ -262,40 +271,19 @@ def connected( data, data_wh, threshold ):
             # housekeeping...
             if( tmp_y > last_y ):
                 # Tidy list of found regions if we've advanced a line
-                # reset reg_idx to begining of active list
+                # reset reg_idx to begining of active section
+                # TODO: Find a way to do this in place by swapping values, and not re-sizing the list loads.
+                reg_scan = reg_start
+                reg_idx  = reg_start
+                reg_len  = len( reg_list )
+                while( reg_scan < reg_len ):
+                    # retire this region, it can't touch
+                    if( reg_list[ reg_scan ].sl_n == last_y ):
+                        reg_list.insert( reg_idx, reg_list.pop( reg_scan ) )
+                        reg_idx += 1
+                    reg_scan += 1
+                reg_start = reg_idx
                 last_y = tmp_y
-                touching_y = last_y - 1 # y of a scanline that can touch the current scanline
-                # A bit hokey, but it will work
-                done = False
-                reg_inspect = 0
-                move_list = [] # idxs of active reg list to move to inactive
-                while( not done ):
-                    # maybe go through the list backwards, bubbling non-touching regions up to
-                    # reg_start++ ?  Like a gnome sort??  Would happen in place to a 1D list
-                    candidates = len( reg_list[1] )
-                    if( candidates < 1 ):
-                        # out of candidates, need to append to reg_list
-                        done = True
-                        break
-                    if( reg_inspect >= candidates ):
-                        # runout of regions to test
-                        done = True
-                        break
-                        
-                    if reg_list[1][reg_inspect].sl_n != touching_y:
-                        # this region can't touch the line, drop it
-                        move_list.append( reg_inspect )
-                        reg_inspect += 1
-                    else:
-                        # keep this in the active list, move inspection idx along
-                        reg_inspect += 1
-
-                # we have a list of idxs to demote from the active list to the finished list
-                print move_list
-                for i in reversed( move_list ):
-                    reg_list[0].append( reg_list[1].pop( i ) )
-                # move reg_idx back to start of active region list
-                reg_idx = 0
                 
             # scan bright px, break if we go round the corner to the next row which
             # happens to have a hot px at [y][0] (rare)
@@ -311,11 +299,11 @@ def connected( data, data_wh, threshold ):
             # check for tmp_reg's scanline conection to existing regions
             # Only Advance the Reg idx here
             # find a region that could plausably touch this scanline
-            reg_len = len( reg_list[1] )
+            reg_len = len( reg_list )
             # If this is first Region, we skip this phase
             merge_target = -1
             while( reg_idx != reg_len ):
-                if( reg_list[1][reg_idx].sl_m < tmp_reg.sl_x ):
+                if( reg_list[reg_idx].sl_m < tmp_reg.sl_x ):
                     # ri is behind tmp, move on
                     reg_idx += 1
 
@@ -326,15 +314,15 @@ def connected( data, data_wh, threshold ):
                 # Insert at end, no more merging needed
                 new_reg = factory.newRegion()
                 new_reg.merge( tmp_reg )
-                reg_list[1].insert( reg_idx, new_reg )
+                reg_list.insert( reg_idx, new_reg )
                 merging = False
                 # Bail out?
                 
             while( merging ):
             	# Merging needs a rewrite, but this is better.
             	# TODO: Merging, with Front 242 Algo.
-                if( (reg_list[1][reg_idx].sl_x == tmp_reg.sl_m) or \
-                    (tmp_reg.sl_x <= reg_list[1][reg_idx].sl_m)): # Just inside
+                if( (reg_list[reg_idx].sl_x == tmp_reg.sl_m) or \
+                    (tmp_reg.sl_x <= reg_list[reg_idx].sl_m)): # Just inside
                     # tmp starts somewhere in this region
                     merge_target = reg_idx
                     break
@@ -346,14 +334,14 @@ def connected( data, data_wh, threshold ):
                     # insert at reg_idx
                     new_reg = factory.newRegion()
                     new_reg.merge( tmp_reg )
-                    reg_list[1].insert( reg_idx, new_reg )
+                    reg_list.insert( reg_idx, new_reg )
                 else:
                     # merge with merge_target, store origenal Scanline
-                    master_line.merge( reg_list[1][merge_target] )
-                    reg_list[1][merge_target].merge( tmp_reg )
+                    master_line.merge( reg_list[merge_target] )
+                    reg_list[merge_target].merge( tmp_reg )
                     
                 # Now see if tmp extends into subsequent regions
-                reg_len = len( reg_list[1] )
+                reg_len = len( reg_list )
                 # are there regions to try and merge into?
             	merging = (reg_len > 0) and (reg_idx != (reg_len-1))
                 # meed to check behind, so we don't eat one of the M's legs
@@ -373,13 +361,13 @@ def connected( data, data_wh, threshold ):
                     
                     
                 """
-                if( reg_list[1][reg_idx+1].sl_x < tmp_reg.sl_m ):
+                if( reg_list[reg_idx+1].sl_x < tmp_reg.sl_m ):
                     # merge this line in
                     # TODO: preserve this Scanline, take 'above' regions's ID
                     # DEPRICATED BELOW
-                    reg_list[1][reg_idx].merge( reg_list[1][reg_idx+1] )
-                    del reg_list[1][reg_idx+1]
-                    reg_len = len( reg_list[1] )
+                    reg_list[reg_idx].merge( reg_list[reg_idx+1] )
+                    del reg_list[reg_idx+1]
+                    reg_len = len( reg_list )
                     if( reg_idx == ( reg_len - 1 ) ):
                         # reached the end of the list
                         merging = False
@@ -417,7 +405,7 @@ def connected( data, data_wh, threshold ):
         # Go back to skipping dark Pixels
         
     # we can only be here if we've ended
-    return reg_list
+    return regReconcile( reg_list, reg_lut )
     
 # Tests
 """
