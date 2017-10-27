@@ -314,21 +314,26 @@ def connected( data, data_wh, threshold ):
                 if( reg_list[reg_idx].sl_m < tmp_reg.sl_x ):
                     # ri is behind tmp, move on
                     reg_idx += 1
-
-            # this should be the beginning of the merging process
+                else:
+                    break
+                    
+            # reg_idx is either at the end, touching, or in front
             master_line.reset()
             merging = True
-            if( reg_idx == reg_len ):
-                # Insert at end, no more merging needed
+            if( (tmp_reg.sl_m < reg_list[reg_idx].sl_x) or (reg_idx == reg_len) ):
+                # Insert at end, or infront of reg_list[reg_idx] as they don't touch
                 new_reg = factory.newRegion()
                 new_reg.merge( tmp_reg )
                 reg_list.insert( reg_idx, new_reg )
                 merging = False
                 # Bail out?
                 
+            mode = "N" # "W", "M"
+            
             while( merging ):
-            	# Merging needs a rewrite, but this is better.
-            	# TODO: Merging, with Front 242 Algo.
+                # If we're here, tmp_reg touches reg_list[reg_idx]
+                # Merging needs a rewrite, but this is better.
+                # TODO: Merging, with Front 242 Algo.
                 if( (reg_list[reg_idx].sl_x == tmp_reg.sl_m) or \
                     (tmp_reg.sl_x <= reg_list[reg_idx].sl_m)): # Just inside
                     # tmp starts somewhere in this region
@@ -351,24 +356,13 @@ def connected( data, data_wh, threshold ):
                 # Now see if tmp extends into subsequent regions
                 reg_len = len( reg_list )
                 # are there regions to try and merge into?
-            	merging = (reg_len > 0) and (reg_idx != (reg_len-1))
+                merging = (reg_len > 0) and (reg_idx != (reg_len-1))
                 # meed to check behind, so we don't eat one of the M's legs
                 # by propogating the id, we can keep the legs
                 # this will require a 'region reconciliation' pass at the end
                 # also deal with gutterballs by scanning region list for bb's touching
                 # top or bottom line of the ROI we're inspecting
-                """
-                    There are two key merge conditions, W and M
-                    
-                    ---   ----   ----
-                     ----tmp_reg---
-                     
-                     
-                     ---temp_reg----
-                    ---    ---    ----
-                    
-                    
-                """
+
                 if( reg_list[reg_idx+1].sl_x < tmp_reg.sl_m ):
                     # merge this line in
                     # TODO: preserve this Scanline, take 'above' regions's ID
@@ -387,29 +381,7 @@ def connected( data, data_wh, threshold ):
             if( idx >= data_out ):
                 ended = True
             # I think we're done!
-        """
-        # We're only interested in 4-connected Neighbours
-        
-              --     --     ---    --
-             ---    ----    ---    ---
-            ---      --     ---     --
-        
-        
-        # Globbed Markers
-        
-              --  --
-             ----.---   
-              --  --
-        the . would be a 'saddle point' where there is a brightness gradient
-        
-        # region scanning notes
-        
-  
-          x-ri-m   x-ri+1-m
-               x---m
-                tmp
-        
-        """
+
         # Go back to skipping dark Pixels
         
     # we can only be here if we've ended
