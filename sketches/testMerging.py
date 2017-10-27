@@ -35,23 +35,44 @@
          ----tmp_reg---
          
          
-         -----------------
+         ----------------- -rouge-
         -tmp-    -u-    -u--      <- Undiscovered regions
         
         
         
+        ri touches tmp
+        
         
         # Merge in
         sl.update( tmp )
-        ri.update( tmp)
+        ml.update( ri  )
+        ri.update( tmp )  
         
+        if sl.m > ri.m:
+        	mode = 'W'
+    	else:
+    		mode = 'M'
+    		
         # find subsequent touched region(s)
-
-        while( tmp.sl_m is > than ri.sl_m )
-            masterline.reset()
-            masterline.update( ri )
-            ri.update( tmp )
-            ri += 1
+		if mode=='M' :
+        	while( sl.m is > ri.m )
+				ri.update( tmp )
+				ri += 1
+            
         # eat px till end of ri.sl_m
         sl_end = master_line
+        idx += 1
+        while( idx < sl_end ):
+        	while( idx < sl_end );
+        		idx += 1
+        		if( data[idx] > threashold ):
+        			# New Region
+        			while( data[idx] > threashold ):
+        				idx += 1
+        			# complete region
+        			ri += 1
+        			# add region at ri
+        # finally test for rouge region we extended into
+        if( ri.sl_m > ri+1.sl_x ):
+        	# sl_
 """
