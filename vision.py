@@ -65,18 +65,23 @@ class Region( object ):
 
         
     def merge( self, other ):
-        # combine regions self & other
+        # combine regions
         # expand BB
         self.bb_x = min( other.bb_x, self.bb_x )
         self.bb_y = min( other.bb_y, self.bb_y )
         self.bb_m = max( other.bb_m, self.bb_m )
         self.bb_n = max( other.bb_n, self.bb_n )
         # take incomming scanline
+        self.takeSL( other )
+        # region id
+        self.id = min( other.id, self.id )
+
+        
+    def takeSL( self, other ):
+        # Take scanline data
         self.sl_x = other.sl_x
         self.sl_m = other.sl_m
         self.sl_n = other.sl_n
-        # region id
-        self.id = min( other.id, self.id )
         
         
     def __repr__( self ):
@@ -318,7 +323,7 @@ def connected( data, data_wh, threshold ):
                     break
                     
             # reg_idx is either at the end, touching, or in front
-            master_line.reset()
+            
             merging = True
             if( (tmp_reg.sl_m < reg_list[reg_idx].sl_x) or (reg_idx == reg_len) ):
                 # Insert at end, or infront of reg_list[reg_idx] as they don't touch
@@ -327,56 +332,73 @@ def connected( data, data_wh, threshold ):
                 reg_list.insert( reg_idx, new_reg )
                 merging = False
                 # Bail out?
+
+            if( merging ):
+                mode = "N" # "W", "M"
+                master_line.reset()
+                scan_line.reset()
+                scan_line.takeSL( tmp_reg )
                 
-            mode = "N" # "W", "M"
+                if( reg_list[reg_idx].sl_m > tmp_reg.sl_m ):
+                    # M mode - possibly undiscovered scanlines
+                    mode = "M"
+                    # store the ML
+                    master_line.takeSL( reg_list[reg_idx] )
+                    master_line.id = reg_list[reg_idx]
+                elif( tmp_reg.sl_m > reg_list[reg_idx].sl_m )
+                    # W mode, we are looking for regions
+                    mode = "W"
+                
+                reg_list[reg_idx].merge( tmp_reg )
             
-            while( merging ):
-                # If we're here, tmp_reg touches reg_list[reg_idx]
-                # Merging needs a rewrite, but this is better.
-                # TODO: Merging, with Front 242 Algo.
-                if( (reg_list[reg_idx].sl_x == tmp_reg.sl_m) or \
-                    (tmp_reg.sl_x <= reg_list[reg_idx].sl_m)): # Just inside
-                    # tmp starts somewhere in this region
-                    merge_target = reg_idx
-                    break
-                else:
-                    # insert before region at ri
-                    break
-
-                if( merge_target < 0 ):
-                    # insert at reg_idx
-                    new_reg = factory.newRegion()
-                    new_reg.merge( tmp_reg )
-                    reg_list.insert( reg_idx, new_reg )
-                else:
-                    # merge with merge_target, store origenal Scanline
-                    master_line.merge( reg_list[merge_target] )
-                    reg_list[merge_target].merge( tmp_reg )
-                    
-                # Now see if tmp extends into subsequent regions
-                reg_len = len( reg_list )
-                # are there regions to try and merge into?
-                merging = (reg_len > 0) and (reg_idx != (reg_len-1))
-                # meed to check behind, so we don't eat one of the M's legs
-                # by propogating the id, we can keep the legs
-                # this will require a 'region reconciliation' pass at the end
-                # also deal with gutterballs by scanning region list for bb's touching
-                # top or bottom line of the ROI we're inspecting
-
-                if( reg_list[reg_idx+1].sl_x < tmp_reg.sl_m ):
-                    # merge this line in
-                    # TODO: preserve this Scanline, take 'above' regions's ID
-                    # DEPRICATED BELOW
-                    reg_list[reg_idx].merge( reg_list[reg_idx+1] )
-                    del reg_list[reg_idx+1]
-                    reg_len = len( reg_list )
-                    if( reg_idx == ( reg_len - 1 ) ):
-                        # reached the end of the list
+            while( merging ):                
+                if( mode=="W" ):
+                    # advance through regions, swallowing them
+                    while( (reg_idx < reg_len) ):
+                        if( reg_list[reg_idx+1].sl_x <= scan_line.sl_m ):
+                            # merge region data
+                            reg_list[reg_idx].merge( reg_list[reg_idx+1] )
+                            # promote old region to master_line, and pop
+                            master_line.takeSL( reg_list.pop( reg_idx+1 ) )
+                            master_line.id = reg_list[reg_idx]
+                            reg_len -= 1
+                        else:
+                            break
+                    # check for overhang, we might enter M mode
+                    if( reg_list[reg_idx].sl_m > scan_line.sl_m ):
+                        mode = "M"
+                    else:
                         merging = False
-                else:
-                    # can't reach the next region
-                    merging = False
-                # increment reg_idx to soak up W globs
+                        
+                if( mode=="M" ):
+                    # scan px in this row up to master_line.sl_m
+                    # if there is a hot line, create a new region, add to lut
+                    while( idx <= master_line.sl_m ):
+                        if( data[idx] > threshold ):
+                            # found a hot line AGAIN
+                            new_reg = factory.newRegion()
+                            new_reg.sl_x = idx - row_start
+                            new_reg.sl_y = tmp_y
+                            while( idx < row_end ):
+                                if( data[idx] > threshold ):
+                                    # collect statistics
+                                    idx += 1
+                                else:
+                                    break
+                            new_reg.sl_m = idx - row_start
+                            new_reg.update()
+                            reg_idx += 1
+                            reg_list.insert( reg_idx, new_reg )
+                            reg_len += 1
+                            # update LUT
+                            reg_lut[ new_reg.id ] = master_line.id
+                            if( new_reg.sl_m > master_line.sl_m ):
+                                # we're in W mode now
+                                mode = "W"
+                                break
+                        idx += 1
+                    if( idx >= master_line.sl_m ):
+                        merging = False
                 
             if( idx >= data_out ):
                 ended = True
