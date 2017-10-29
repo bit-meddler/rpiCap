@@ -44,6 +44,9 @@ class Region( object ):
         # scanline
         self.sl_x, self.sl_m =  0, 0 # LAST hot line of this region
         self.sl_n            =  0    # y index of last scanline
+        # stats
+        self.area            =  0    # area of glob
+        self.perimeter       =  0    # parimiter of glob
         # ID
         self.id              = self.BIG_NUM
         
@@ -53,6 +56,8 @@ class Region( object ):
         self.bb_m, self.bb_n =  0, 0
         self.sl_x, self.sl_m =  0, 0
         self.sl_n            =  0
+        self.area            =  0
+        self.perimeter       =  0
         self.id              = self.BIG_NUM
         
         
@@ -62,7 +67,7 @@ class Region( object ):
         self.bb_y = min( self.sl_n, self.bb_y )
         self.bb_m = max( self.sl_m, self.bb_m )
         self.bb_n = max( self.sl_n, self.bb_n )
-
+        
         
     def merge( self, other ):
         # combine regions
@@ -73,6 +78,9 @@ class Region( object ):
         self.bb_n = max( other.bb_n, self.bb_n )
         # take incomming scanline
         self.takeSL( other )
+        # statistics
+        self.area += other.area
+        self.perimeter += other.perimeter
         # region id
         self.id = min( other.id, self.id )
 
@@ -148,9 +156,10 @@ class SIMDsim( object ):
     
 def regReconcile( reg_list, reg_lut ):
     """
-        Notionally, we record mergable regions and preserve the scanlines
-        Now we need to merge them into one RoI.
-        LUT is source_id : target_id
+        Finish up regions
+        1) Add every region's last scan line to it's perimeter and area
+        2) if region in LUT.keys we need to drop it and merge into it's parent
+        3) return BBs
     """
     return reg_list
     
@@ -299,8 +308,6 @@ def connected( data, data_wh, threshold ):
             # happens to have a hot px at [y][0] (rare)
             # idx is the FIRST bright px
             while( (row_end > idx) and (data[idx] >= threshold) ):
-                # If we collect statistics durring this process, here's the place to do it
-                # that will be 4 or 5 values that could be 32-bit (int or fp)
                 idx += 1
             tmp_reg.sl_m = (idx - row_start) # last bright px
         
@@ -313,8 +320,7 @@ def connected( data, data_wh, threshold ):
             # Only Advance the Reg idx here
             # find a region that could plausably touch this scanline
             reg_len = len( reg_list )
-            # If this is first Region, we skip this phase
-            merge_target = -1
+            # If this is first Region (reg_len==0, reg_idx==0), we skip this phase
             while( reg_idx != reg_len ):
                 if( reg_list[reg_idx].sl_m < tmp_reg.sl_x ):
                     # ri is behind tmp, move on
@@ -322,13 +328,15 @@ def connected( data, data_wh, threshold ):
                 else:
                     break
                     
-            # reg_idx is either at the end, touching, or in front
-            
+            # reg_idx is either at the end of rl, touching rl[ri], or in front of rl[ri]
             merging = True
             if( (tmp_reg.sl_m < reg_list[reg_idx].sl_x) or (reg_idx == reg_len) ):
-                # Insert at end, or infront of reg_list[reg_idx] as they don't touch
+                # Insert at end, or in front of rl[ri] as they don't touch
                 new_reg = factory.newRegion()
                 new_reg.merge( tmp_reg )
+                # Collect statistics HERE
+                new_reg.area = new_reg.sl_m - new_reg.sl_x
+                new_reg.perimeter = new_reg.area
                 reg_list.insert( reg_idx, new_reg )
                 merging = False
                 # Bail out?
@@ -344,7 +352,7 @@ def connected( data, data_wh, threshold ):
                     mode = "M"
                     # store the ML
                     master_line.takeSL( reg_list[reg_idx] )
-                    master_line.id = reg_list[reg_idx]
+                    master_line.id = reg_list[reg_idx].id
                 elif( tmp_reg.sl_m > reg_list[reg_idx].sl_m )
                     # W mode, we are looking for regions
                     mode = "W"
@@ -354,13 +362,14 @@ def connected( data, data_wh, threshold ):
             while( merging ):                
                 if( mode=="W" ):
                     # advance through regions, swallowing them
-                    while( (reg_idx < reg_len) ):
+                    while( (reg_idx < reg_len) ): # if ri==len, we're at the end
                         if( reg_list[reg_idx+1].sl_x <= scan_line.sl_m ):
                             # merge region data
                             reg_list[reg_idx].merge( reg_list[reg_idx+1] )
                             # promote old region to master_line, and pop
+                            # we'll need the ml if there is an overhang
                             master_line.takeSL( reg_list.pop( reg_idx+1 ) )
-                            master_line.id = reg_list[reg_idx]
+                            master_line.id = reg_list[reg_idx].id
                             reg_len -= 1
                         else:
                             break
@@ -381,12 +390,14 @@ def connected( data, data_wh, threshold ):
                             new_reg.sl_y = tmp_y
                             while( idx < row_end ):
                                 if( data[idx] > threshold ):
-                                    # collect statistics
                                     idx += 1
                                 else:
                                     break
                             new_reg.sl_m = idx - row_start
                             new_reg.update()
+                            # collect statistics
+                            new_reg.area = new_reg.sl_m - new_reg.sl_x
+                            new_reg.perimeter = new_reg.area
                             reg_idx += 1
                             reg_list.insert( reg_idx, new_reg )
                             reg_len += 1
