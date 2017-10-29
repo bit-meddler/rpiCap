@@ -212,16 +212,23 @@ def connected( data, data_wh, threshold ):
     data_out    = len(data) # frame to end scanning
     factory     = RegionFactory() # Region Factory
     
-    simd = SIMDsim()
     tmp_reg     = Region()  # temporary region for comparison & mergin
-    master_line = Region()  # Cache of Merge target's scanline for 242
+    master_line = Region()  # Cache of master Region's scanline for 242
+    scan_line   = Region()  # Cache of current scanline
     
+    simd        = SIMDsim() # Proxy for what will be SIMD
     align       = simd.WIDTH# Align on Vec width modulus
     vec_width   = simd.WIDTH# simulate 128-Bit SIMD lanes (64-Bit)
     vec_th      = simd.wideFlood( threshold )# all threshold
     vec_res     = simd.wideFlood( False )
+    
+    ended       = False
+    skipping    = False
+    scanning    = False
+    inserting   = False
+    merging     = False
+    
     sanity = {}
-    ended = False
     # BEGIN
     while( not ended ):
         # prep
@@ -236,21 +243,21 @@ def connected( data, data_wh, threshold ):
         # advance by single bytes, till we are in alignment
         # print "align", align_offset, idx, data_out, ended
         if idx>1:
-            print idx
+            print idx, data_out
             print reg_list
             
         for i in range( align_offset ):
             # possibly needs an ended test...
-            idx += 1
             if( data[idx] >= threshold ):
                 # got one !
                 skipping     = False
                 scanning     = True
                 break
+            idx += 1
         # skip over dark px, byte aligned
         if( (not scanning) and ((data_out - idx) <= vec_width) ):
             skipping = False
-        ended = (idx >= data_out)
+        ended = (idx >= (data_out-1))
         
         while( skipping and not ended ):
             print "skipping from:", idx
@@ -274,18 +281,19 @@ def connected( data, data_wh, threshold ):
         if( scanning ):
             # Scanning
             # ########
+            print "scanning", idx
             tmp_reg.reset()
             # compute scanline x,y position in rectilinear image
             if( idx > row_end ):
                 tmp_y, tmp_x = divmod( idx, d_w )
                 row_start    = tmp_y * d_w
-                row_end      = (tmp_y+1) * d_w # this row in a rect image
+                row_end      = ((tmp_y+1) * d_w) - 1 # this row in a rect image
             else:
                 tmp_x        = idx - row_start # Still in the same row
                 
             tmp_reg.sl_n, tmp_reg.sl_x = tmp_y, tmp_x
             
-            print "Housekeeping test at", tmp_x, tmp_y, "From", idx
+            print "Housekeeping test at", tmp_x, tmp_y, "From", idx, "last-y", last_y, "re", row_end
             
             # housekeeping...
             if( tmp_y > last_y ):
@@ -297,7 +305,7 @@ def connected( data, data_wh, threshold ):
                 reg_len  = len( reg_list )
                 while( reg_scan < reg_len ):
                     # retire this region, it can't touch
-                    if( reg_list[ reg_scan ].sl_n == last_y ):
+                    if( reg_list[ reg_scan ].sl_n < last_y ):
                         reg_list.insert( reg_idx, reg_list.pop( reg_scan ) )
                         reg_idx += 1
                     reg_scan += 1
@@ -307,10 +315,10 @@ def connected( data, data_wh, threshold ):
             # Scan bright px, break if we go round the corner to the next row which
             # happens to have a hot px at [y][0] (rare)
             # idx is the FIRST bright px
-            while( (row_end > idx) and (data[idx] >= threshold) ):
+            while( (row_end >= idx) and (data[idx] >= threshold) ):
                 idx += 1
             tmp_reg.sl_m = (idx - row_start) # last bright px
-        
+            print "sl ended on", idx, tmp_reg.sl_m, tmp_reg.sl_n
             # Finalize our region based on this scanline
             tmp_reg.update()
 
@@ -321,6 +329,7 @@ def connected( data, data_wh, threshold ):
             # find a region that could plausably touch this scanline
             reg_len = len( reg_list )
             # If this is first Region (reg_len==0, reg_idx==0), we skip this phase
+            print reg_idx, reg_len
             while( reg_idx != reg_len ):
                 if( reg_list[reg_idx].sl_m < tmp_reg.sl_x ):
                     # ri is behind tmp, move on
@@ -329,8 +338,18 @@ def connected( data, data_wh, threshold ):
                     break
                     
             # reg_idx is either at the end of rl, touching rl[ri], or in front of rl[ri]
-            merging = True
-            if( (tmp_reg.sl_m < reg_list[reg_idx].sl_x) or (reg_idx == reg_len) ):
+            merging   = True
+            inserting = False
+            # guard against 0 length list
+            if( reg_idx == reg_len ):
+                # Bug: what if this is desired.  we are marging into the first region?
+                print "="
+                inserting = True
+            elif( tmp_reg.sl_m < reg_list[reg_idx].sl_x ):
+                print "touch"
+                inserting = True
+                
+            if( inserting ):
                 # Insert at end, or in front of rl[ri] as they don't touch
                 new_reg = factory.newRegion()
                 new_reg.merge( tmp_reg )
@@ -342,6 +361,7 @@ def connected( data, data_wh, threshold ):
                 # Bail out?
 
             if( merging ):
+                print "in Merge Test"
                 mode = "N" # "W", "M"
                 master_line.reset()
                 scan_line.reset()
@@ -353,16 +373,24 @@ def connected( data, data_wh, threshold ):
                     # store the ML
                     master_line.takeSL( reg_list[reg_idx] )
                     master_line.id = reg_list[reg_idx].id
-                elif( tmp_reg.sl_m > reg_list[reg_idx].sl_m )
+                elif( tmp_reg.sl_m > reg_list[reg_idx].sl_m ):
                     # W mode, we are looking for regions
                     mode = "W"
-                
+                else:
+                    # Perfect Match, "W" is less expensive I think
+                    mode = "W"
+                    
                 reg_list[reg_idx].merge( tmp_reg )
-            
+            sanity = 5
             while( merging ):                
+                print "in Merging", mode
+                sanity -= 1
+                if sanity==0:
+                    exit(0)
                 if( mode=="W" ):
+                    print "in W", reg_idx, reg_len
                     # advance through regions, swallowing them
-                    while( (reg_idx < reg_len) ): # if ri==len, we're at the end
+                    while( (reg_idx < (reg_len-1)) ): # if ri==len, we're at the end
                         if( reg_list[reg_idx+1].sl_x <= scan_line.sl_m ):
                             # merge region data
                             reg_list[reg_idx].merge( reg_list[reg_idx+1] )
@@ -380,8 +408,11 @@ def connected( data, data_wh, threshold ):
                         merging = False
                         
                 if( mode=="M" ):
+                    print "in M"
                     # scan px in this row up to master_line.sl_m
                     # if there is a hot line, create a new region, add to lut
+                    line_end = (master_line.sl_n*d_w)+master_line.sl_m
+                    print idx, row_end, line_end
                     while( idx <= master_line.sl_m ):
                         if( data[idx] > threshold ):
                             # found a hot line AGAIN
@@ -411,7 +442,7 @@ def connected( data, data_wh, threshold ):
                     if( idx >= master_line.sl_m ):
                         merging = False
                 
-            if( idx >= data_out ):
+            if( idx >= (data_out-1) ):
                 ended = True
             # I think we're done!
 
@@ -439,7 +470,7 @@ test = np.vstack( [A,B] )
 print test
 regs = connected( test.ravel(), test.T.shape, 5 )
 print regs
-
+exit(0)
 
 # more complext regions
 A = np.zeros( (8,24), dtype=np.uint8 )
