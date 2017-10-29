@@ -35,7 +35,8 @@ import numpy as np
 class Region( object ):
 
     BIG_NUM = 10000 # bigger than expected image extents
-
+    INVALID = -1000 # Hint that this Region is invalidated
+    
     
     def __init__( self ):
         # bounding box
@@ -157,9 +158,11 @@ class SIMDsim( object ):
 def regReconcile( reg_list, reg_lut ):
     """
         Finish up regions
-        1) Add every region's last scan line to it's perimeter and area
+        1) Add every region's last scan line to it's perimeter -2
         2) if region in LUT.keys we need to drop it and merge into it's parent
         3) return BBs
+        
+        len( lut ) == number of deletions, so we can pre-size the return array
     """
     print  reg_lut
     return reg_list
@@ -386,6 +389,9 @@ def connected( data, data_wh, threshold ):
                     # Perfect Match, "W" is less expensive I think
                     mode = "W"
                     
+                # statistics
+                tmp_reg.area = tmp_reg.sl_m - tmp_reg.sl_x
+                tmp_reg.perimeter += 2
                 reg_list[reg_idx].merge( tmp_reg )
             sanity = 5
             while( merging ):                
