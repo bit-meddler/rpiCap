@@ -268,12 +268,13 @@ def connected( data, data_wh, threshold ):
                 skipping = False
                 scanning = True
                 idx += v_idx
+                print "^"
                 break
             idx += vec_width
             ended = (idx > data_out)
             if( (data_out - idx) <= vec_width ):
                 skipping = False
-                scanning = True
+                scanning = False # soak up last non-aligned bytes
         # either we're out of data, or we've found a bright line
         if( ended ):
             return regReconcile( reg_list, reg_lut )
@@ -303,9 +304,11 @@ def connected( data, data_wh, threshold ):
                 reg_scan = reg_start
                 reg_idx  = reg_start
                 reg_len  = len( reg_list )
+                previous_y = tmp_y-1
                 while( reg_scan < reg_len ):
                     # retire this region, it can't touch
-                    if( reg_list[ reg_scan ].sl_n < last_y ):
+                    print "?", reg_list[ reg_scan ].sl_n, last_y
+                    if( reg_list[ reg_scan ].sl_n < previous_y ):
                         reg_list.insert( reg_idx, reg_list.pop( reg_scan ) )
                         reg_idx += 1
                     reg_scan += 1
@@ -317,7 +320,8 @@ def connected( data, data_wh, threshold ):
             # idx is the FIRST bright px
             while( (row_end >= idx) and (data[idx] >= threshold) ):
                 idx += 1
-            tmp_reg.sl_m = (idx - row_start) # last bright px
+            
+            tmp_reg.sl_m = (idx - row_start) -1  # last bright px
             print "sl ended on", idx, tmp_reg.sl_m, tmp_reg.sl_n
             # Finalize our region based on this scanline
             tmp_reg.update()
@@ -329,7 +333,7 @@ def connected( data, data_wh, threshold ):
             # find a region that could plausably touch this scanline
             reg_len = len( reg_list )
             # If this is first Region (reg_len==0, reg_idx==0), we skip this phase
-            print reg_idx, reg_len
+            print "regi", reg_idx, reg_len
             while( reg_idx != reg_len ):
                 if( reg_list[reg_idx].sl_m < tmp_reg.sl_x ):
                     # ri is behind tmp, move on
@@ -351,6 +355,7 @@ def connected( data, data_wh, threshold ):
                 
             if( inserting ):
                 # Insert at end, or in front of rl[ri] as they don't touch
+                print "New reg, insert"
                 new_reg = factory.newRegion()
                 new_reg.merge( tmp_reg )
                 # Collect statistics HERE
@@ -391,7 +396,9 @@ def connected( data, data_wh, threshold ):
                     print "in W", reg_idx, reg_len
                     # advance through regions, swallowing them
                     while( (reg_idx < (reg_len-1)) ): # if ri==len, we're at the end
-                        if( reg_list[reg_idx+1].sl_x <= scan_line.sl_m ):
+                        if( (reg_list[reg_idx+1].sl_x <= scan_line.sl_m) and \
+                            (reg_list[reg_idx+1].sl_m >= scan_line.sl_x) ):
+                            print "W merge"
                             # merge region data
                             reg_list[reg_idx].merge( reg_list[reg_idx+1] )
                             # promote old region to master_line, and pop
@@ -413,9 +420,10 @@ def connected( data, data_wh, threshold ):
                     # if there is a hot line, create a new region, add to lut
                     line_end = (master_line.sl_n*d_w)+master_line.sl_m
                     print idx, row_end, line_end
-                    while( idx <= master_line.sl_m ):
+                    while( idx <= line_end ):
                         if( data[idx] > threshold ):
                             # found a hot line AGAIN
+                            print "New reg, M mode"
                             new_reg = factory.newRegion()
                             new_reg.sl_x = idx - row_start
                             new_reg.sl_y = tmp_y
@@ -470,8 +478,18 @@ test = np.vstack( [A,B] )
 print test
 regs = connected( test.ravel(), test.T.shape, 5 )
 print regs
-exit(0)
 
+"""
+    0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
+0 [ 0 10 10 10  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0]
+1 [ 0 10 10 10  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0]
+2 [ 0 10 10 10  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0]
+3 [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0]
+4 [ 0  0  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0]
+5 [ 0  0  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0  0]
+6 [ 0  0  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0  0]
+7 [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0  0]
+"""
 # more complext regions
 A = np.zeros( (8,24), dtype=np.uint8 )
 B = np.ones( (3,3), dtype=np.uint8 ) * 10
