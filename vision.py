@@ -401,6 +401,8 @@ def connected( data, data_wh, threshold ):
                             print "W merge"
                             # merge region data
                             reg_list[reg_idx].merge( reg_list[reg_idx+1] )
+                            # preserve the scanline for future merging
+                            reg_list[reg_idx].takeSL( scan_line )
                             # promote old region to master_line, and pop
                             # we'll need the ml if there is an overhang
                             master_line.takeSL( reg_list.pop( reg_idx+1 ) )
@@ -461,6 +463,7 @@ def connected( data, data_wh, threshold ):
     
 # Tests
 """
+Basic test
     0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15
 0 [10 10 10  0  0  0  0  0  0  0  0  0  0  0  0  0]
 1 [10 10 10  0  0  0  0  0  0  0  0  0  0  0  0  0]
@@ -469,7 +472,6 @@ def connected( data, data_wh, threshold ):
 4 [ 0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10]
 5 [ 0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10]
 """
-# Basic test
 a = ([10]*3 + [0]*13) * 3
 A = np.array(a).reshape(3,-1)
 a.reverse()
@@ -480,6 +482,7 @@ regs = connected( test.ravel(), test.T.shape, 5 )
 print regs
 
 """
+more complext regions
     0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
 0 [ 0 10 10 10  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0]
 1 [ 0 10 10 10  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0]
@@ -490,10 +493,30 @@ print regs
 6 [ 0  0  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0  0]
 7 [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0  0]
 """
-# more complext regions
 A = np.zeros( (8,24), dtype=np.uint8 )
 B = np.ones( (3,3), dtype=np.uint8 ) * 10
 pos = ( (0,1), (0,5), (0,20), (4,3), (5, 19) )
+for y,x in pos:
+    A[y:y+3, x:x+3] = B
+test = A
+print test
+regs = connected( test.ravel(), test.T.shape, 5 )
+print regs
+"""
+Now for a blobby one...
+    0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
+0 [ 0 10 10 10  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0]
+1 [ 0 10 10 10  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0]
+2 [ 0 10 10 10  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0]
+3 [ 0  0  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0]
+4 [ 0  0  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0  0]
+5 [ 0  0  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0  0]
+6 [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0  0]
+7 [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0]
+    
+"""
+A = np.zeros( (8,24), dtype=np.uint8 )
+pos = ( (0,1), (0,5), (1,20), (3,3), (4, 19) )
 for y,x in pos:
     A[y:y+3, x:x+3] = B
 test = A
