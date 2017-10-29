@@ -161,6 +161,7 @@ def regReconcile( reg_list, reg_lut ):
         2) if region in LUT.keys we need to drop it and merge into it's parent
         3) return BBs
     """
+    print  reg_lut
     return reg_list
     
     
@@ -420,7 +421,7 @@ def connected( data, data_wh, threshold ):
                     print "in M"
                     # scan px in this row up to master_line.sl_m
                     # if there is a hot line, create a new region, add to lut
-                    line_end = (master_line.sl_n*d_w)+master_line.sl_m
+                    line_end = (scan_line.sl_n*d_w)+master_line.sl_m
                     print idx, row_end, line_end
                     while( idx <= line_end ):
                         if( data[idx] > threshold ):
@@ -428,7 +429,7 @@ def connected( data, data_wh, threshold ):
                             print "New reg, M mode"
                             new_reg = factory.newRegion()
                             new_reg.sl_x = idx - row_start
-                            new_reg.sl_y = tmp_y
+                            new_reg.sl_n = tmp_y
                             while( idx < row_end ):
                                 if( data[idx] > threshold ):
                                     idx += 1
@@ -436,6 +437,7 @@ def connected( data, data_wh, threshold ):
                                     break
                             new_reg.sl_m = idx - row_start
                             new_reg.update()
+                            print new_reg
                             # collect statistics
                             new_reg.area = new_reg.sl_m - new_reg.sl_x
                             new_reg.perimeter = new_reg.area
@@ -517,6 +519,26 @@ Now for a blobby one...
 """
 A = np.zeros( (8,24), dtype=np.uint8 )
 pos = ( (0,1), (0,5), (1,20), (3,3), (4, 19) )
+for y,x in pos:
+    A[y:y+3, x:x+3] = B
+test = A
+print test
+regs = connected( test.ravel(), test.T.shape, 5 )
+print regs
+"""
+And an M merge...
+    0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23  24 25 26 27 28 29 30 31
+0 [ 0 10 10 10  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0   0  0  0  0  0  0  0  0]
+1 [ 0 10 10 10  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0   0  0  0  0  0  0  0  0]
+2 [ 0 10 10 10  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0   0  0  0  0  0  0  0  0]
+3 [ 0  0  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0   0  0  0  0  0  0  0  0]
+4 [ 0  0  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0 10 10  10  0  0  0  0  0  0  0]
+5 [ 0  0  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0 10 10  10  0  0  0  0  0  0  0]
+6 [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0 10 10  10  0  0  0  0  0  0  0]
+7 [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0   0  0  0  0  0  0  0  0]
+"""
+A = np.zeros( (8,32), dtype=np.uint8 )
+pos = ( (0,1), (0,5), (1,20), (3,3), (4, 18), (4, 22) )
 for y,x in pos:
     A[y:y+3, x:x+3] = B
 test = A
