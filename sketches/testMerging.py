@@ -75,4 +75,19 @@
         # finally test for rouge region we extended into
         if( ri.sl_m > ri+1.sl_x ):
         	# sl_
+            
+            
+    
+    # update statistics idea
+    def update( self, perm=None ):
+        # ...
+        a = self.sl_m - self.sl_x
+        p = 2 # any 'body' line adds 2 to the perimeter
+        if( perim != None ):
+            # this is the first or last line
+            p = a
+        self.perimeter += p
+        self.area += a
+        
 """
+
