@@ -173,9 +173,9 @@ def regReconcile( reg_list, reg_lut ):
         s_idx = id2idx[ source ]
         t_idx = id2idx[ target ]
         reg_list[ t_idx ].merge( reg_list[ s_idx ] )
-        reg_list[ s_idx ] = None
+        reg_list[ s_idx ].id = Region.INVALID
     for reg in reg_list:
-        if reg != None:
+        if reg.id != Region.INVALID:
             ret.append( reg )
     print  reg_lut
     return ret
@@ -561,7 +561,7 @@ And an M merge...
 7 [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0   0  0  0  0  0  0  0  0]
 """
 A = np.zeros( (8,32), dtype=np.uint8 )
-pos = ( (0,1), (0,5), (1,20), (3,3), (4, 18), (4, 22) )
+pos = ( (0,1), (0,5), (1,20), (3,3), (4, 18), (4, 22), (1, 10) )
 for y,x in pos:
     A[y:y+3, x:x+3] = B
 test = A
