@@ -164,8 +164,21 @@ def regReconcile( reg_list, reg_lut ):
         
         len( lut ) == number of deletions, so we can pre-size the return array
     """
+    ret = []
+    id2idx = {}
+    for i, reg in enumerate( reg_list ):
+        reg.perimeter += (reg.sl_m - reg.sl_x) -2
+        id2idx[ reg.id ] = i
+    for source, target in reg_lut.iteritems():
+        s_idx = id2idx[ source ]
+        t_idx = id2idx[ target ]
+        reg_list[ t_idx ].merge( reg_list[ s_idx ] )
+        reg_list[ s_idx ] = None
+    for reg in reg_list:
+        if reg != None:
+            ret.append( reg )
     print  reg_lut
-    return reg_list
+    return ret
     
     
 def connected( data, data_wh, threshold ):
@@ -451,7 +464,11 @@ def connected( data, data_wh, threshold ):
                             reg_list.insert( reg_idx, new_reg )
                             reg_len += 1
                             # update LUT
-                            reg_lut[ new_reg.id ] = master_line.id
+                            master_id = master_line.id
+                            # There exists a corner case where the ml.id is itself an orphen.  
+                            if master_id in reg_lut:
+                                master_id = reg_lut[ master_id ]
+                            reg_lut[ new_reg.id ] = master_id
                             if( new_reg.sl_m > master_line.sl_m ):
                                 # we're in W mode now
                                 mode = "W"
