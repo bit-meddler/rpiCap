@@ -28,6 +28,9 @@ def onSelect( event ):
     for itm in sel_list:
         old_tag = tree.item( itm, "tag" )[0]
         # Bit Twiddle!
+        new_tag = int(old_tag) ^ TAG_SEL
+        tree.item( itm, tag=new_tag )
+        
         
 tree.tag_configure( TAG_DEF,         font=('Helvetica', 10) )
 tree.tag_configure( TAG_DIS,         font=('Helvetica', 10, 'italic') )
