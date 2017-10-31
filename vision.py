@@ -180,6 +180,18 @@ def regReconcile( reg_list, reg_lut ):
     print  reg_lut
     return ret
     
+
+def roids( reg_list ):
+    ret = []
+    for reg in reg_list:
+        x = abs(reg.bb_m - reg.bb_x) / 2
+        y = abs(reg.bb_n - reg.bb_y) / 2
+        r = (x+y)/2
+        x += reg.bb_x
+        y += reg.bb_y
+        ret.append( (x,y,r) )
+    return ret
+    
     
 def connected( data, data_wh, threshold ):
     """
@@ -277,7 +289,6 @@ def connected( data, data_wh, threshold ):
         ended = (idx >= (data_out-1))
         
         while( skipping and not ended ):
-            print "skipping from:", idx
             vec_res = simd.wideGTE( data[idx:idx+vec_width], vec_th )
             v_idx = simd.idxOfTrue( vec_res )
             if( v_idx >= 0 ):
@@ -497,14 +508,15 @@ Basic test
 4 [ 0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10]
 5 [ 0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10]
 """
-a = ([10]*3 + [0]*13) * 3
-A = np.array(a).reshape(3,-1)
-a.reverse()
-B = np.array(a).reshape(3,-1)
-test = np.vstack( [A,B] )
-print test
-regs = connected( test.ravel(), test.T.shape, 5 )
-print regs
+if False:
+    a = ([10]*3 + [0]*13) * 3
+    A = np.array(a).reshape(3,-1)
+    a.reverse()
+    B = np.array(a).reshape(3,-1)
+    test = np.vstack( [A,B] )
+    print test
+    regs = connected( test.ravel(), test.T.shape, 5 )
+    print roids( regs )
 
 """
 more complext regions
@@ -518,15 +530,16 @@ more complext regions
 6 [ 0  0  0 10 10 10  0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0  0]
 7 [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0  0]
 """
-A = np.zeros( (8,24), dtype=np.uint8 )
-B = np.ones( (3,3), dtype=np.uint8 ) * 10
-pos = ( (0,1), (0,5), (0,20), (4,3), (5, 19) )
-for y,x in pos:
-    A[y:y+3, x:x+3] = B
-test = A
-print test
-regs = connected( test.ravel(), test.T.shape, 5 )
-print regs
+if False:
+    A = np.zeros( (8,24), dtype=np.uint8 )
+    B = np.ones( (3,3), dtype=np.uint8 ) * 10
+    pos = ( (0,1), (0,5), (0,20), (4,3), (5, 19) )
+    for y,x in pos:
+        A[y:y+3, x:x+3] = B
+    test = A
+    print test
+    regs = connected( test.ravel(), test.T.shape, 5 )
+    print roids( regs )
 """
 Now for a blobby one...
     0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
@@ -540,14 +553,15 @@ Now for a blobby one...
 7 [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0]
     
 """
-A = np.zeros( (8,24), dtype=np.uint8 )
-pos = ( (0,1), (0,5), (1,20), (3,3), (4, 19) )
-for y,x in pos:
-    A[y:y+3, x:x+3] = B
-test = A
-print test
-regs = connected( test.ravel(), test.T.shape, 5 )
-print regs
+if False:
+    A = np.zeros( (8,24), dtype=np.uint8 )
+    pos = ( (0,1), (0,5), (1,20), (3,3), (4, 19) )
+    for y,x in pos:
+        A[y:y+3, x:x+3] = B
+    test = A
+    print test
+    regs = connected( test.ravel(), test.T.shape, 5 )
+    print roids( regs )
 """
 And an M merge...
     0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23  24 25 26 27 28 29 30 31
@@ -560,11 +574,24 @@ And an M merge...
 6 [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0 10 10 10  0 10 10  10  0  0  0  0  0  0  0]
 7 [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0   0  0  0  0  0  0  0  0]
 """
-A = np.zeros( (8,32), dtype=np.uint8 )
-pos = ( (0,1), (0,5), (1,20), (3,3), (4, 18), (4, 22), (1, 10) )
-for y,x in pos:
-    A[y:y+3, x:x+3] = B
-test = A
-print test
-regs = connected( test.ravel(), test.T.shape, 5 )
-print regs
+if False:
+    A = np.zeros( (8,32), dtype=np.uint8 )
+    pos = ( (0,1), (0,5), (1,20), (3,3), (4, 18), (4, 22), (1, 10) )
+    for y,x in pos:
+        A[y:y+3, x:x+3] = B
+    test = A
+    print test
+    regs = connected( test.ravel(), test.T.shape, 5 )
+    print roids( regs )
+
+    
+if True:
+    import cv2
+    img = np.zeros( (100,100), dtype=np.uint8 )
+    cv2.circle( img, (50,50), 10, (200), -1, 1, 0)
+    regs = connected( img.ravel(), img.T.shape, 155 )
+    print roids( regs )
+
+    cv2.imshow( 'Test', img )
+    cv2.waitKey( 0 )
+    cv2.destroyAllWindows()
