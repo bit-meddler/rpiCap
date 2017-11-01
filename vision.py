@@ -28,9 +28,8 @@ Interesting:
 Other observations
     circularity = 4pi(area/perimeter^2)
 """
-from copy import deepcopy
 import numpy as np
-
+import cv2
 
 class Region( object ):
 
@@ -50,6 +49,8 @@ class Region( object ):
         self.perimeter       =  0    # parimiter of glob
         # ID
         self.id              = self.BIG_NUM
+        # merge Flag
+        self.globbed         = False # Is this a glob?
         
         
     def reset( self ):
@@ -60,6 +61,7 @@ class Region( object ):
         self.area            =  0
         self.perimeter       =  0
         self.id              = self.BIG_NUM
+        self.globbed         = False
         
         
     def update( self ):
@@ -82,6 +84,7 @@ class Region( object ):
         # statistics
         self.area += other.area
         self.perimeter += other.perimeter
+        self.globbed |= other.globbed
         # region id
         self.id = min( other.id, self.id )
 
@@ -94,9 +97,9 @@ class Region( object ):
         
         
     def __repr__( self ):
-        return "Region '{}' BB: {}-{}, {}-{}. SL: {}-{} @ {}".format(
+        return "Region '{}' BB: {}-{}, {}-{}. SL: {}-{} @ {} {}merged".format(
             self.id,   self.bb_x, self.bb_y, self.bb_m, self.bb_n,
-            self.sl_x, self.sl_m, self.sl_n
+            self.sl_x, self.sl_m, self.sl_n, "" if self.globbed else "not "
         )
         
         
@@ -170,14 +173,17 @@ def regReconcile( reg_list, reg_lut ):
         reg.perimeter += (reg.sl_m - reg.sl_x) -2
         id2idx[ reg.id ] = i
     for source, target in reg_lut.iteritems():
+        if not source in id2idx:
+            # source region may have been merged already
+            continue
         s_idx = id2idx[ source ]
         t_idx = id2idx[ target ]
         reg_list[ t_idx ].merge( reg_list[ s_idx ] )
+        reg_list[ t_idx ].globbed = True
         reg_list[ s_idx ].id = Region.INVALID
     for reg in reg_list:
         if reg.id != Region.INVALID:
             ret.append( reg )
-    print  reg_lut
     return ret
     
 
@@ -187,9 +193,10 @@ def roids( reg_list ):
         x = abs(reg.bb_m - reg.bb_x) / 2
         y = abs(reg.bb_n - reg.bb_y) / 2
         r = (x+y)/2
+        score = float(x) / float(y)
         x += reg.bb_x
         y += reg.bb_y
-        ret.append( (x,y,r) )
+        ret.append( (x,y,r,score) )
     return ret
     
     
@@ -244,6 +251,7 @@ def connected( data, data_wh, threshold ):
     tmp_reg     = Region()  # temporary region for comparison & mergin
     master_line = Region()  # Cache of master Region's scanline for 242
     scan_line   = Region()  # Cache of current scanline
+    merge_target= Region()  # holding space for a merged region
     
     simd        = SIMDsim() # Proxy for what will be SIMD
     align       = simd.WIDTH# Align on Vec width modulus
@@ -335,7 +343,7 @@ def connected( data, data_wh, threshold ):
                 previous_y = tmp_y-1
                 while( reg_scan < reg_len ):
                     # retire this region, it can't touch
-                    print "?", reg_list[ reg_scan ].sl_n, last_y
+                    #print "?", reg_list[ reg_scan ].sl_n, last_y
                     if( reg_list[ reg_scan ].sl_n < previous_y ):
                         reg_list.insert( reg_idx, reg_list.pop( reg_scan ) )
                         reg_idx += 1
@@ -417,12 +425,10 @@ def connected( data, data_wh, threshold ):
                 tmp_reg.area = tmp_reg.sl_m - tmp_reg.sl_x
                 tmp_reg.perimeter += 2
                 reg_list[reg_idx].merge( tmp_reg )
-            sanity = 5
+                
+                
             while( merging ):                
                 print "in Merging", mode
-                sanity -= 1
-                if sanity==0:
-                    exit(0)
                 if( mode=="W" ):
                     print "in W", reg_idx, reg_len
                     # advance through regions, swallowing them
@@ -431,7 +437,12 @@ def connected( data, data_wh, threshold ):
                             (reg_list[reg_idx+1].sl_m >= scan_line.sl_x) ):
                             print "W merge"
                             # merge region data
-                            reg_list[reg_idx].merge( reg_list[reg_idx+1] )
+                            merge_target = reg_list[reg_idx+1]
+                            reg_list[reg_idx].merge( merge_target )
+                            reg_list[reg_idx].globbed = True
+                            # update LUT
+                            if merge_target.id in reg_lut:
+                                reg_lut[ merge_target.id ] = reg_list[reg_idx].id
                             # preserve the scanline for future merging
                             reg_list[reg_idx].takeSL( scan_line )
                             # promote old region to master_line, and pop
@@ -471,6 +482,7 @@ def connected( data, data_wh, threshold ):
                             # collect statistics
                             new_reg.area = new_reg.sl_m - new_reg.sl_x
                             new_reg.perimeter = new_reg.area
+                            new_reg.globbed = True # Born of a merge
                             reg_idx += 1
                             reg_list.insert( reg_idx, new_reg )
                             reg_len += 1
@@ -585,13 +597,31 @@ if False:
     print roids( regs )
 
     
-if True:
-    import cv2
+if False:
     img = np.zeros( (100,100), dtype=np.uint8 )
     cv2.circle( img, (50,50), 10, (200), -1, 1, 0)
     regs = connected( img.ravel(), img.T.shape, 155 )
     print roids( regs )
 
-    cv2.imshow( 'Test', img )
+    cv2.imshow( 'Test Image', img )
     cv2.waitKey( 0 )
     cv2.destroyAllWindows()
+    
+if True:
+    tests = {   "Test Image":  ((50,50,10),),
+                "Test Blobs":  ((10,10,6), (10,15,6), (20,10,6), (50,50,6), (44,33,6), (60,60,6)),
+                "Test Blobs2": ((10,10,6), (10,18,3), (20,20,8), (50,50,6)),
+                "Test Dots":   ((10,10,6), (20,18,3), (40,40,8), (60,60,6))
+    }
+    for test in tests:
+        img = np.zeros( (100,100), dtype=np.uint8 )
+        for x,y,r in tests[test]:
+            cv2.circle( img, (x,y), r, (200), -1, 1, 0)
+        regs = connected( img.ravel(), img.T.shape, 155 )
+        print roids( regs )
+        print tests[test]
+        cv2.imshow( test, img )
+        cv2.waitKey( 0 )
+        cv2.destroyAllWindows()
+    
+    
