@@ -30,6 +30,8 @@ Other observations
 """
 import numpy as np
 import cv2
+import math
+
 
 class Region( object ):
 
@@ -186,8 +188,13 @@ def regReconcile( reg_list, reg_lut ):
             ret.append( reg )
     return ret
     
-
-def regs2dets( reg_list ):
+    
+def regs2dets( reg_list, data, threshold ):
+    pass
+    
+    
+def regs2dets1( reg_list, data=None, threshold=None ):
+    # Nieve 'center of a BB' computation
     ret = []
     for reg in reg_list:
         x = abs(reg.bb_m - reg.bb_x) / 2
@@ -201,7 +208,80 @@ def regs2dets( reg_list ):
         y += reg.bb_y
         ret.append( (x,y,r,score) )
     return ret
+
     
+def regs2dets2( reg_list, data, threshold ):
+    """ solving mathematically
+        1) pick 3 points on the circle
+            (x_1, y_1), (x_2, y_2), (x_3, y_3)
+        2) solve linear system, determinant method
+          [ [ (x_1**2 + y_1**2), x_1, y_1 | 1 ],
+            [ (x_2**2 + y_2**2), x_2, y_2 | 1 ],
+            [ (x_3**2 + y_3**2), x_3, y_3 | 1 ] ]  = 0
+            
+          http://www.ambrsoft.com/TrigoCalc/Circle3D.htm
+          decomposes this system nicely
+          
+          also c.f. https://stackoverflow.com/questions/4103405/what-is-the-algorithm-for-finding-the-center-of-a-circle-from-three-points
+          for a geometric method
+    """
+    ret = []
+    x_1 = y_1 = x_2 = y_2 = x_3 = y_3 = 0
+    for reg in reg_list:
+        # Trace CND logo to pick three points
+        x = ((reg.bb_m - reg.bb_x)/2) + reg.bb_x
+        y = reg.bb_y
+        while( data[y][x] < threshold ):
+            y += 1
+        x_1, y_1 = map( float, (x, y) )
+        
+        x = reg.bb_x
+        y = reg.bb_n
+        while( data[y][x] < threshold ):
+            y -= 1
+            x += 1
+        x_2, y_2 = map( float, (x, y) )
+        
+        x = reg.bb_m
+        y = reg.bb_n
+        while( data[y][x] < threshold ):
+            y -= 1
+            x -= 1
+        x_3, y_3 = map( float, (x, y) )
+        
+        # precompute some squares
+        x_1s = x_1**2
+        y_1s = y_1**2
+        x_2s = x_2**2
+        y_2s = y_2**2
+        x_3s = x_3**2
+        y_3s = y_3**2
+        
+        A2 = (2*((x_1*(y_2 - y_3)) - (y_1*(x_2 - x_3)) + (x_2*y_3) - (x_3*y_2)))
+        
+        x = ( ((x_1s + y_1s)*(y_2 - y_3)) + ((x_2s + y_2s)*(y_3 - y_1)) + ((x_3s + y_3s)*(y_1 - y_2)) ) / A2
+        y = ( ((x_1s + y_1s)*(x_3 - x_2)) + ((x_2s + y_2s)*(x_1 - x_3)) + ((x_3s + y_3s)*(x_2 - x_1)) ) / A2
+        r = math.sqrt( (x - x_1)**2 + (y - y_1)**2 )
+        
+        # pixels are not 'little squares' !
+        x += 0.5
+        y += 0.5
+        
+        score = (4*math.pi) * (float(reg.area)/(float(reg.perimeter)**2))
+        ret.append( (x,y,r,score) )
+    return ret
+    
+    
+def regs2dets3( reg_list, data, threshold ):
+    """
+        Image Moments
+        see: https://en.wikipedia.org/wiki/Image_moment
+             https://homepages.inf.ed.ac.uk/rbf/CVonline/LOCAL_COPIES/SHUTLER3/node8.html
+    """
+    pass
+    
+    
+regs2dets = regs2dets2
     
 def regStitch( top, gutter, bottom ):
     top_tgt = []
@@ -318,7 +398,6 @@ def connected( data, data_wh, threshold, data_in, data_out ):
     inserting   = False
     merging     = False
     
-    sanity = {}
     # BEGIN
     idx = data_in
     while( not ended ):
@@ -353,7 +432,6 @@ def connected( data, data_wh, threshold, data_in, data_out ):
                 skipping = False
                 scanning = True
                 idx += v_idx
-                print "^"
                 break
             idx += vec_width
             ended = (idx > data_out)
@@ -367,7 +445,6 @@ def connected( data, data_wh, threshold, data_in, data_out ):
         if( scanning ):
             # Scanning
             # ########
-            print "scanning", idx
             tmp_reg.reset()
             # compute scanline x,y position in rectilinear image
             if( idx > row_end ):
@@ -405,9 +482,7 @@ def connected( data, data_wh, threshold, data_in, data_out ):
             # idx is the FIRST bright px
             while( (row_end >= idx) and (data[idx] >= threshold) ):
                 idx += 1
-            
             tmp_reg.sl_m = (idx - row_start) -1  # last bright px
-            print "sl ended on", idx, tmp_reg.sl_m, tmp_reg.sl_n
             # Finalize our region based on this scanline
             tmp_reg.update()
 
@@ -432,10 +507,8 @@ def connected( data, data_wh, threshold, data_in, data_out ):
             # guard against 0 length list
             if( reg_idx == reg_len ):
                 # Bug: what if this is desired.  we are marging into the first region?
-                print "="
                 inserting = True
             elif( tmp_reg.sl_m < reg_list[reg_idx].sl_x ):
-                print "touch"
                 inserting = True
                 
             if( inserting ):
@@ -562,9 +635,10 @@ def connected( data, data_wh, threshold, data_in, data_out ):
 def drawDets( image, det_list, col=(0,0,200) ):
     i_h, i_w, _ = image.shape
     for x,y,r,_ in det_list:
-        cv2.circle( image, (x,y), r, (200,0,0), 1, 1, 0)
-        cv2.line( image, (max(0,x-2),y), (min(i_w,x+2),y), col, 1 )
-        cv2.line( image, (x,max(0,y-2)), (x,min(i_h,y+2)), col, 1 )
+        x_, y_, r_ = map(int,(x,y,r))
+        cv2.circle( image, (x_,y_), r_, (200,0,0), 1, 1, 0)
+        cv2.line( image, (max(0,x_-2),y_), (min(i_w,x_+2),y_), col, 1 )
+        cv2.line( image, (x_,max(0,y_-2)), (x_,min(i_h,y_+2)), col, 1 )
         
     
 """
@@ -693,11 +767,12 @@ if True:
     split_line = 100
     split_point = split_line*200
     img_end = 200*200
-    regs_0 = connected( img.ravel(), img.T.shape, 155, 0, split_point )
-    regs_1 = connected( img.ravel(), img.T.shape, 155, split_point, img_end )
+    threshold = 155
+    regs_0 = connected( img.ravel(), img.T.shape, threshold, 0, split_point )
+    regs_1 = connected( img.ravel(), img.T.shape, threshold, split_point, img_end )
     
-    dets_0 = regs2dets( regs_0 )
-    dets_1 = regs2dets( regs_1 )
+    dets_0 = regs2dets( regs_0, img, threshold )
+    dets_1 = regs2dets( regs_1, img, threshold )
     
     print dets_0, dets_1
     
@@ -711,7 +786,7 @@ if True:
     
     retort = cv2.cvtColor( img, cv2.COLOR_GRAY2RGB )
     regs = regStitch( regs_0, split_line, regs_1 )
-    dets = regs2dets( regs )
+    dets = regs2dets( regs, img, threshold )
     print dets
     
     drawDets( retort, dets )
