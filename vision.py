@@ -203,7 +203,57 @@ def regs2dets( reg_list ):
     return ret
     
     
-def connected( data, data_wh, threshold ):
+def regStitch( top, gutter, bottom ):
+    top_tgt = []
+    bot_tgt = []
+    top_gutter = (gutter - 1)
+
+    for reg in top:
+        if( reg.sl_n == top_gutter ):
+            top_tgt.append( reg )
+
+    t_len = len( top_tgt )
+    if( t_len < 1 ):
+        # no top candidates
+        return top+bottom
+    
+    for reg in bottom:
+        if( reg.bb_y == gutter ):
+            bot_tgt.append( reg )
+            
+    b_len = len( bot_tgt )
+    if( b_len < 1 ):
+        # nop bottom candidates
+        return top+bottom
+        
+    top_tgt.sort( key=lambda x: x.bb_x )
+    bot_tgt.sort( key=lambda x: x.bb_x )
+    
+    tti = 0
+    bti = 0
+    
+    while( (tti < t_len) or (bti < b_len) ):
+        # check first top region for connectedness to bottom
+        if( top_tgt[ tti ].bb_m < bot_tgt[ bti ].bb_x ):
+            tti += 1
+        elif( bot_tgt[ bti ].bb_m < top_tgt[ tti ].bb_x ):
+            bti += 1
+        else:
+            # touching?
+            top_tgt[ tti ].merge( bot_tgt[ bti ] )
+            top_tgt[ tti ].globbed = True # ?
+            bottom.remove( bot_tgt[ bti ] )
+            tti += 1
+            bti += 1
+            
+    return top+bottom
+            
+    
+def connectedOld( data, data_wh, threshold ):
+    return connected( data, data_wh, threshold, 0, len(data) )
+    
+    
+def connected( data, data_wh, threshold, data_in, data_out ):
     """
         Assuming data is a flat (unravelled) array of uint8 from a sensor of dimentions data_wh
         
@@ -247,8 +297,8 @@ def connected( data, data_wh, threshold ):
     row_end     = -1        # end of image row, so we don't have to divmod too much
     tmp_pos     = 0         # store of start idx of hot line
     tmp_x, tmp_y= 0, 0      # temp x & y position of bright pixel
-    data_in     = 0         # frame to begin scanning
-    data_out    = len(data) # frame to end scanning
+    # data_in     = 0         # frame to begin scanning
+    # data_out    = len(data) # frame to end scanning
     factory     = RegionFactory() # Region Factory
     
     tmp_reg     = Region()  # temporary region for comparison & mergin
@@ -270,6 +320,7 @@ def connected( data, data_wh, threshold ):
     
     sanity = {}
     # BEGIN
+    idx = data_in
     while( not ended ):
         # prep
         # problem soaking up the last bytes...
@@ -508,12 +559,12 @@ def connected( data, data_wh, threshold ):
     return regReconcile( reg_list, reg_lut )
     
 # Tests
-def drawDets( image, det_list ):
+def drawDets( image, det_list, col=(0,0,200) ):
     i_h, i_w, _ = image.shape
     for x,y,r,_ in det_list:
         cv2.circle( image, (x,y), r, (200,0,0), 1, 1, 0)
-        cv2.line( image, (max(0,x-2),y), (min(i_w,x+2),y), (0,0,200), 1 )
-        cv2.line( image, (x,max(0,y-2)), (x,min(i_h,y+2)), (0,0,200), 1 )
+        cv2.line( image, (max(0,x-2),y), (min(i_w,x+2),y), col, 1 )
+        cv2.line( image, (x,max(0,y-2)), (x,min(i_h,y+2)), col, 1 )
         
     
 """
@@ -533,7 +584,7 @@ if False:
     B = np.array(a).reshape(3,-1)
     test = np.vstack( [A,B] )
     print test
-    regs = connected( test.ravel(), test.T.shape, 5 )
+    regs = connectedOld( test.ravel(), test.T.shape, 5 )
     print regs2dets( regs )
 
 """
@@ -556,7 +607,7 @@ if False:
         A[y:y+3, x:x+3] = B
     test = A
     print test
-    regs = connected( test.ravel(), test.T.shape, 5 )
+    regs = connectedOld( test.ravel(), test.T.shape, 5 )
     print regs2dets( regs )
 """
 Now for a blobby one...
@@ -578,7 +629,7 @@ if False:
         A[y:y+3, x:x+3] = B
     test = A
     print test
-    regs = connected( test.ravel(), test.T.shape, 5 )
+    regs = connectedOld( test.ravel(), test.T.shape, 5 )
     print regs2dets( regs )
 """
 And an M merge...
@@ -599,22 +650,23 @@ if False:
         A[y:y+3, x:x+3] = B
     test = A
     print test
-    regs = connected( test.ravel(), test.T.shape, 5 )
+    regs = connectedOld( test.ravel(), test.T.shape, 5 )
     print regs2dets( regs )
 
-    
+
+# Test with basic Images    
 if False:
     img = np.zeros( (100,100), dtype=np.uint8 )
     cv2.circle( img, (50,50), 10, (200), -1, 1, 0)
-    regs = connected( img.ravel(), img.T.shape, 155 )
+    regs = connectedOld( img.ravel(), img.T.shape, 155 )
     print regs2dets( regs )
-
     cv2.imshow( 'Test Image', img )
     cv2.waitKey( 0 )
     cv2.destroyAllWindows()
 
     
-if True:
+# Test Globbed Detections
+if False:
     tests = {   "Test Image":  ((50,50,10),),
                 "Test Blobs":  ((10,10,6), (10,15,6), (20,10,6), (50,50,6), (44,33,6), (60,60,6)),
                 "Test Blobs2": ((10,10,6), (10,18,3), (20,20,8), (50,50,6)),
@@ -624,13 +676,48 @@ if True:
         img = np.zeros( (100,100), dtype=np.uint8 )
         for x,y,r in tests[test]:
             cv2.circle( img, (x,y), r, (200), -1, 1, 0)
-        regs = connected( img.ravel(), img.T.shape, 155 )
+        regs = connectedOld( img.ravel(), img.T.shape, 155 )
         dets = regs2dets( regs )
         print tests[test], dets
         retort = cv2.cvtColor( img, cv2.COLOR_GRAY2RGB )
-        drawDets( retort,dets )
+        drawDets( retort, dets )
         cv2.imshow( test, retort )
         cv2.waitKey( 0 )
         cv2.destroyAllWindows()
+    
+# Test ROI processing and gutterballs
+if True:
+    img = np.zeros( (200,200), dtype=np.uint8 )
+    for x,y,r in ((20,20,10), (75,75,10), (120,120,5), (180,180,10), (100,100,10), (20,97,6)):
+        cv2.circle( img, (x,y), r, (200), -1, 1, 0)
+    split_line = 100
+    split_point = split_line*200
+    img_end = 200*200
+    regs_0 = connected( img.ravel(), img.T.shape, 155, 0, split_point )
+    regs_1 = connected( img.ravel(), img.T.shape, 155, split_point, img_end )
+    
+    dets_0 = regs2dets( regs_0 )
+    dets_1 = regs2dets( regs_1 )
+    
+    print dets_0, dets_1
+    
+    retort = cv2.cvtColor( img, cv2.COLOR_GRAY2RGB )
+    drawDets( retort, dets_0 )
+    drawDets( retort, dets_1, (0,200,0))
+    
+    cv2.imshow( "RoI test 1", retort )
+    cv2.waitKey( 0 )
+    cv2.destroyAllWindows()
+    
+    retort = cv2.cvtColor( img, cv2.COLOR_GRAY2RGB )
+    regs = regStitch( regs_0, split_line, regs_1 )
+    dets = regs2dets( regs )
+    print dets
+    
+    drawDets( retort, dets )
+    
+    cv2.imshow( "RoI test 2", retort )
+    cv2.waitKey( 0 )
+    cv2.destroyAllWindows()
     
     
