@@ -187,13 +187,16 @@ def regReconcile( reg_list, reg_lut ):
     return ret
     
 
-def roids( reg_list ):
+def regs2dets( reg_list ):
     ret = []
     for reg in reg_list:
         x = abs(reg.bb_m - reg.bb_x) / 2
         y = abs(reg.bb_n - reg.bb_y) / 2
         r = (x+y)/2
-        score = float(x) / float(y)
+        if x<y:
+            score = float(x) / float(y)
+        else:
+            score = float(y) / float(x)
         x += reg.bb_x
         y += reg.bb_y
         ret.append( (x,y,r,score) )
@@ -278,11 +281,6 @@ def connected( data, data_wh, threshold ):
         # skipping
         # ########
         # advance by single bytes, till we are in alignment
-        # print "align", align_offset, idx, data_out, ended
-        if idx>1:
-            print idx, data_out
-            print reg_list
-            
         for i in range( align_offset ):
             # possibly needs an ended test...
             if( data[idx] >= threshold ):
@@ -369,7 +367,7 @@ def connected( data, data_wh, threshold ):
             # find a region that could plausably touch this scanline
             reg_len = len( reg_list )
             # If this is first Region (reg_len==0, reg_idx==0), we skip this phase
-            print "regi", reg_idx, reg_len
+            #print "regi", reg_idx, reg_len
             while( reg_idx != reg_len ):
                 if( reg_list[reg_idx].sl_m < tmp_reg.sl_x ):
                     # ri is behind tmp, move on
@@ -430,7 +428,7 @@ def connected( data, data_wh, threshold ):
             while( merging ):                
                 print "in Merging", mode
                 if( mode=="W" ):
-                    print "in W", reg_idx, reg_len
+                    #print "in W", reg_idx, reg_len
                     # advance through regions, swallowing them
                     while( (reg_idx < (reg_len-1)) ): # if ri==len, we're at the end
                         if( (reg_list[reg_idx+1].sl_x <= scan_line.sl_m) and \
@@ -510,6 +508,14 @@ def connected( data, data_wh, threshold ):
     return regReconcile( reg_list, reg_lut )
     
 # Tests
+def drawDets( image, det_list ):
+    i_h, i_w, _ = image.shape
+    for x,y,r,_ in det_list:
+        cv2.circle( image, (x,y), r, (200,0,0), 1, 1, 0)
+        cv2.line( image, (max(0,x-2),y), (min(i_w,x+2),y), (0,0,200), 1 )
+        cv2.line( image, (x,max(0,y-2)), (x,min(i_h,y+2)), (0,0,200), 1 )
+        
+    
 """
 Basic test
     0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15
@@ -528,7 +534,7 @@ if False:
     test = np.vstack( [A,B] )
     print test
     regs = connected( test.ravel(), test.T.shape, 5 )
-    print roids( regs )
+    print regs2dets( regs )
 
 """
 more complext regions
@@ -551,7 +557,7 @@ if False:
     test = A
     print test
     regs = connected( test.ravel(), test.T.shape, 5 )
-    print roids( regs )
+    print regs2dets( regs )
 """
 Now for a blobby one...
     0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
@@ -573,7 +579,7 @@ if False:
     test = A
     print test
     regs = connected( test.ravel(), test.T.shape, 5 )
-    print roids( regs )
+    print regs2dets( regs )
 """
 And an M merge...
     0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23  24 25 26 27 28 29 30 31
@@ -594,18 +600,19 @@ if False:
     test = A
     print test
     regs = connected( test.ravel(), test.T.shape, 5 )
-    print roids( regs )
+    print regs2dets( regs )
 
     
 if False:
     img = np.zeros( (100,100), dtype=np.uint8 )
     cv2.circle( img, (50,50), 10, (200), -1, 1, 0)
     regs = connected( img.ravel(), img.T.shape, 155 )
-    print roids( regs )
+    print regs2dets( regs )
 
     cv2.imshow( 'Test Image', img )
     cv2.waitKey( 0 )
     cv2.destroyAllWindows()
+
     
 if True:
     tests = {   "Test Image":  ((50,50,10),),
@@ -618,9 +625,11 @@ if True:
         for x,y,r in tests[test]:
             cv2.circle( img, (x,y), r, (200), -1, 1, 0)
         regs = connected( img.ravel(), img.T.shape, 155 )
-        print roids( regs )
-        print tests[test]
-        cv2.imshow( test, img )
+        dets = regs2dets( regs )
+        print tests[test], dets
+        retort = cv2.cvtColor( img, cv2.COLOR_GRAY2RGB )
+        drawDets( retort,dets )
+        cv2.imshow( test, retort )
         cv2.waitKey( 0 )
         cv2.destroyAllWindows()
     
