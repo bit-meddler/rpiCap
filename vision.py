@@ -31,7 +31,7 @@ Other observations
 import numpy as np
 import cv2
 import math
-
+import random
 
 class Region( object ):
 
@@ -283,7 +283,7 @@ def regs2dets3( reg_list, data, threshold ):
     for reg in reg_list:
         # scan the BB and acumulate Image moments
         M_00 = 1e-6 # div 0 guard
-        M_10 = M_01 = M_20 = M_02 = 0.
+        M_10 = M_01 = M_11 = M_20 = M_02 = 0.
         x = y = r = score = 0.
         for j in range( reg.bb_y, reg.bb_n ):
             for i in range( reg.bb_x, reg.bb_m ):
@@ -292,27 +292,38 @@ def regs2dets3( reg_list, data, threshold ):
                     M_00 += pix
                     M_10 += pix * i
                     M_01 += pix * j
+                    M_11 += pix * i * j
                     M_20 += pix * i * i
                     M_02 += pix * j * j
                     
         M_00r = 1. / M_00
         x = M_10 * M_00r
         y = M_01 * M_00r
-        # wrong!
-        r_x = (M_20 * M_00r)**0.5
-        r_y = (M_02 * M_00r)**0.5
-        r = (r_x + r_y)/2. # avg radius
         
         # fix px center
         x += 0.5
         y += 0.5
+
+        xx = math.sqrt(M_20*M_00r)
+        yy = math.sqrt(M_02*M_00r)
+        xy = math.sqrt(M_11*M_00r)
+        print xx,yy,xy
+        # # Convert to Hu invariants
+        # # 
+        # # None of this toss works!
+        # u_11 = (M_11 - (x*M_01)) * M_00r
+        # u_20 = (M_20 - (x*M_10)) * M_00r
+        # u_02 = (M_02 - (y*M_01)) * M_00r
+        
+        # J = [[u_20, u_11],[u_11, u_02]]
+        # ei_1, ei_2 = np.linalg.eigvals(J)
+        # r = (ei_1 + ei_2)/2.
+
         
         # score based on X/Y radius simallarity
-        if( r_x < r_y ):
-            score = r_x / r_y
-        else:
-            score = r_y / r_x
+        score = 6
             
+        print x,y,r,score
         ret.append( (x,y,r,score) )
     return ret
     
@@ -493,11 +504,10 @@ def connected( data, data_wh, threshold, data_in, data_out ):
                 
             tmp_reg.sl_n, tmp_reg.sl_x = tmp_y, tmp_x
             
-            print "Housekeeping test at", tmp_x, tmp_y, "From", idx, "last-y", last_y, "re", row_end
+            #print "Housekeeping test at", tmp_x, tmp_y, "From", idx, "last-y", last_y, "re", row_end
             
             # housekeeping...
-            if( tmp_y > last_y ):
-                # Tidy list of found regions if we've advanced a line
+            if( tmp_y > last_y ):# Tidy list of found regions if we've advanced a line
                 # reset reg_idx to begining of active section
                 # TODO: Find a way to do this in place by swapping values, and not re-sizing the list loads.
                 reg_scan = reg_start
@@ -550,7 +560,7 @@ def connected( data, data_wh, threshold, data_in, data_out ):
                 
             if( inserting ):
                 # Insert at end, or in front of rl[ri] as they don't touch
-                print "New reg, insert"
+                #print "New reg, insert"
                 new_reg = factory.newRegion()
                 new_reg.merge( tmp_reg )
                 # Collect statistics HERE
@@ -561,7 +571,7 @@ def connected( data, data_wh, threshold, data_in, data_out ):
                 # Bail out?
 
             if( merging ):
-                print "in Merge Test"
+                #print "in Merge Test"
                 mode = "N" # "W", "M"
                 master_line.reset()
                 scan_line.reset()
@@ -587,14 +597,14 @@ def connected( data, data_wh, threshold, data_in, data_out ):
                 
                 
             while( merging ):                
-                print "in Merging", mode
+                #print "in Merging", mode
                 if( mode=="W" ):
                     #print "in W", reg_idx, reg_len
                     # advance through regions, swallowing them
                     while( (reg_idx < (reg_len-1)) ): # if ri==len, we're at the end
                         if( (reg_list[reg_idx+1].sl_x <= scan_line.sl_m) and \
                             (reg_list[reg_idx+1].sl_m >= scan_line.sl_x) ):
-                            print "W merge"
+                            #print "W merge"
                             # merge region data
                             merge_target = reg_list[reg_idx+1]
                             reg_list[reg_idx].merge( merge_target )
@@ -618,15 +628,15 @@ def connected( data, data_wh, threshold, data_in, data_out ):
                         merging = False
                         
                 if( mode=="M" ):
-                    print "in M"
+                    #print "in M"
                     # scan px in this row up to master_line.sl_m
                     # if there is a hot line, create a new region, add to lut
                     line_end = (scan_line.sl_n*d_w)+master_line.sl_m
-                    print idx, row_end, line_end
+                    #print idx, row_end, line_end
                     while( idx <= line_end ):
                         if( data[idx] > threshold ):
                             # found a hot line AGAIN
-                            print "New reg, M mode"
+                            #print "New reg, M mode"
                             new_reg = factory.newRegion()
                             new_reg.sl_x = idx - row_start
                             new_reg.sl_n = tmp_y
@@ -797,7 +807,7 @@ if False:
         cv2.destroyAllWindows()
     
 # Test ROI processing and gutterballs
-if True:
+if False:
     img = np.zeros( (200,200), dtype=np.uint8 )
     for x,y,r in ((20,20,10), (75,75,10), (120,120,5), (180,180,10), (100,100,10), (20,97,6)):
         cv2.circle( img, (x,y), r, (200), -1, 1, 0)
@@ -824,6 +834,44 @@ if True:
     retort = cv2.cvtColor( img, cv2.COLOR_GRAY2RGB )
     regs = regStitch( regs_0, split_line, regs_1 )
     dets = regs2dets( regs, img, threshold )
+    print dets
+    
+    drawDets( retort, dets )
+    
+    cv2.imshow( "RoI test 2", retort )
+    cv2.waitKey( 0 )
+    cv2.destroyAllWindows()
+    
+if True:
+    img = np.zeros( (720,1280), dtype=np.uint8 )
+    for i in range( 18 ):
+        x = random.randint(12, 1270)
+        y = random.randint(10, 700)
+        r = random.randint(2, 7)
+        
+        cv2.circle( img, (x,y), r, (200), -1, 1, 0)
+    split_line  = 720/2
+    split_point = split_line*200
+    img_end = img.size
+    threshold = 155
+    regs_0 = connected( img.ravel(), img.T.shape, threshold, 0, split_point )
+    regs_1 = connected( img.ravel(), img.T.shape, threshold, split_point, img_end )
+    
+    dets_0 = regs2dets( regs_0, img, threshold )
+    dets_1 = regs2dets( regs_1, img, threshold )
+    
+    retort = cv2.cvtColor( img, cv2.COLOR_GRAY2RGB )
+    drawDets( retort, dets_0 )
+    drawDets( retort, dets_1, (0,200,0))
+    
+    cv2.imshow( "RoI test 1", retort )
+    cv2.waitKey( 0 )
+    cv2.destroyAllWindows()
+    
+    retort = cv2.cvtColor( img, cv2.COLOR_GRAY2RGB )
+    regs = regStitch( regs_0, split_line, regs_1 )
+    dets = regs2dets( regs, img, threshold )
+
     print dets
     
     drawDets( retort, dets )
