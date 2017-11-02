@@ -277,11 +277,48 @@ def regs2dets3( reg_list, data, threshold ):
         Image Moments
         see: https://en.wikipedia.org/wiki/Image_moment
              https://homepages.inf.ed.ac.uk/rbf/CVonline/LOCAL_COPIES/SHUTLER3/node8.html
+             https://books.google.co.uk/books?id=SEAOgA-oCIkC&pg=PA12&lpg=PA12&dq=image+moments+radius&source=bl&ots=ni4XG7JuE2&sig=ZFJpVeIryGZAL0K9MaG7QxA8O30&hl=en&sa=X&ved=0ahUKEwjD4M_KyJ_XAhUI5KQKHRdUCrIQ6AEISTAF#v=onepage&q=image%20moments%20radius&f=false
     """
-    pass
+    ret = []
+    for reg in reg_list:
+        # scan the BB and acumulate Image moments
+        M_00 = 1e-6 # div 0 guard
+        M_10 = M_01 = M_20 = M_02 = 0.
+        x = y = r = score = 0.
+        for j in range( reg.bb_y, reg.bb_n ):
+            for i in range( reg.bb_x, reg.bb_m ):
+                pix = data[j][i]
+                if( pix > threshold ):
+                    M_00 += pix
+                    M_10 += pix * i
+                    M_01 += pix * j
+                    M_20 += pix * i * i
+                    M_02 += pix * j * j
+                    
+        M_00r = 1. / M_00
+        x = M_10 * M_00r
+        y = M_01 * M_00r
+        # wrong!
+        r_x = (M_20 * M_00r)**0.5
+        r_y = (M_02 * M_00r)**0.5
+        r = (r_x + r_y)/2. # avg radius
+        
+        # fix px center
+        x += 0.5
+        y += 0.5
+        
+        # score based on X/Y radius simallarity
+        if( r_x < r_y ):
+            score = r_x / r_y
+        else:
+            score = r_y / r_x
+            
+        ret.append( (x,y,r,score) )
+    return ret
     
     
-regs2dets = regs2dets2
+    
+regs2dets = regs2dets3
     
 def regStitch( top, gutter, bottom ):
     top_tgt = []
