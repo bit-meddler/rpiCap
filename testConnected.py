@@ -11,9 +11,10 @@ import vision
 # Tests
 def drawDets( image, det_list, col=(0,0,200) ):
     i_h, i_w, _ = image.shape
-    for x,y,r,_ in det_list:
+    for x,y,r,s in det_list:
         x_, y_, r_ = map(int,(x,y,r))
-        cv2.circle( image, (x_,y_), r_, (200,0,0), 1, 1, 0)
+        c_col = (0,0,200) if s < 0.66 else (200,0,0)
+        cv2.circle( image, (x_,y_), max(1,r_), c_col, 1, 1, 0)
         cv2.line( image, (max(0,x_-2),y_), (min(i_w,x_+2),y_), col, 1 )
         cv2.line( image, (x_,max(0,y_-2)), (x_,min(i_h,y_+2)), col, 1 )
         
@@ -172,7 +173,7 @@ if False:
     cv2.waitKey( 0 )
     cv2.destroyAllWindows()
     
-if True:
+if False:
     img = np.zeros( (720,1280), dtype=np.uint8 )
     for i in range( 18 ):
         x = random.randint(12, 1270)
@@ -207,6 +208,53 @@ if True:
     drawDets( retort, dets )
     
     cv2.imshow( "RoI test 2", retort )
+    cv2.waitKey( 0 )
+    cv2.destroyAllWindows()
+    
+if True:
+    # Test scatter/Gather processing
+    img_hw = (720,1280)
+    img_wh = (1280,720)
+    
+    img = np.zeros( (720,1280), dtype=np.uint8 )
+    
+    num_cores = 3
+    split_line  = img_wh[1] / num_cores
+    split_point = split_line*img_wh[0]
+    img_end = img.size
+    threshold = 155
+    proc_list = []
+    
+    for i in range( num_cores ):
+        proc_list.append( vision.dotMan( img_wh, i*split_point, (i+1)*split_point, threshold ) )
+        
+    for i in range( 78 ):
+        x = random.randint(12, img_wh[0])
+        y = random.randint(10, img_wh[1])
+        r = random.randint(2, 7)
+        cv2.circle( img, (x,y), r, (200), -1, 1, 0)
+        
+    data = img.ravel()
+    
+    ret_list = []
+    for proc in proc_list:
+        ret_list.append( proc.push( data ) )
+        
+    regs = ret_list[0]
+    for i in range(len(ret_list)-1):
+        regs = vision.regStitch( regs, i*split_line, ret_list[i+1] )
+
+    dets = vision.regs2dets( regs, img, threshold )
+
+    print dets
+    
+    retort = cv2.cvtColor( img, cv2.COLOR_GRAY2RGB )    
+    drawDets( retort, dets )
+    for i in range( num_cores ):
+        y_ = i*split_line
+        cv2.line( retort, (0,y_), (img_wh[0],y_), (250,250,250), 1 )
+        
+    cv2.imshow( "Map/Reduce Test", retort )
     cv2.waitKey( 0 )
     cv2.destroyAllWindows()
     

@@ -288,44 +288,34 @@ def regs2dets3( reg_list, data, threshold ):
             for i in range( reg.bb_x, reg.bb_m ):
                 pix = data[j][i]
                 if( pix > threshold ):
+                    pi = pix * i
+                    pj = pix * j
                     M_00 += pix
-                    M_10 += pix * i
-                    M_01 += pix * j
-                    M_11 += pix * i * j
-                    M_20 += pix * i * i
-                    M_02 += pix * j * j
+                    M_10 += pi
+                    M_01 += pj
+                    M_20 += pi * i
+                    M_02 += pj * j
                     
-        M_00r = 1. / M_00
+        # Centroids from 1st order moments            
+        M_00r = 1. / M_00 # normalize 
         x = M_10 * M_00r
         y = M_01 * M_00r
         
+        # X and Y radius (see wikipedia) from 2nd Order moments
+        # add a little to guard div by zero
+        u_20_ = (M_20 * M_00r) - (x*x) + 1e-8
+        u_02_ = (M_02 * M_00r) - (y*y) + 1e-8
+        r = (u_02_ + u_20_) / 2.
+
+        # score is ration of short / long extent of the elipse
+        score = (u_20_ / u_02_) if( u_20_ < u_02_ ) else (u_02_ / u_20_)
+
         # fix px center
         x += 0.5
         y += 0.5
-
-        xx = math.sqrt(M_20*M_00r)
-        yy = math.sqrt(M_02*M_00r)
-        xy = math.sqrt(M_11*M_00r)
-        print xx,yy,xy
-        # # Convert to Hu invariants
-        # # 
-        # # None of this toss works!
-        # u_11 = (M_11 - (x*M_01)) * M_00r
-        # u_20 = (M_20 - (x*M_10)) * M_00r
-        # u_02 = (M_02 - (y*M_01)) * M_00r
-        
-        # J = [[u_20, u_11],[u_11, u_02]]
-        # ei_1, ei_2 = np.linalg.eigvals(J)
-        # r = (ei_1 + ei_2)/2.
-
-        
-        # score based on X/Y radius simallarity
-        score = 6
             
-        print x,y,r,score
         ret.append( (x,y,r,score) )
     return ret
-    
     
     
 regs2dets = regs2dets3
@@ -645,7 +635,7 @@ def connected( data, data_wh, threshold, data_in, data_out ):
                                     break
                             new_reg.sl_m = idx - row_start
                             new_reg.update()
-                            print new_reg
+                            #print new_reg
                             # collect statistics
                             new_reg.area = new_reg.sl_m - new_reg.sl_x
                             new_reg.perimeter = new_reg.area
@@ -677,7 +667,7 @@ def connected( data, data_wh, threshold, data_in, data_out ):
     return regReconcile( reg_list, reg_lut )
  
  
-def dotMan( Object ):
+class dotMan( object ):
     def __init__( self, data_wh, start_idx, end_idx, threshold ):
         self.data_wh    = data_wh
         self.start_idx  = start_idx
