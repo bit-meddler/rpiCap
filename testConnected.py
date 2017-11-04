@@ -213,40 +213,61 @@ if False:
     
 if True:
     # Test scatter/Gather processing
+    import threading
+    import Queue
+    import time
+    
     img_hw = (720,1280)
     img_wh = (1280,720)
     
     img = np.zeros( (720,1280), dtype=np.uint8 )
     
-    num_cores = 3
+    num_cores   = 1
     split_line  = img_wh[1] / num_cores
     split_point = split_line*img_wh[0]
     img_end = img.size
     threshold = 155
+    strip_list = []
     proc_list = []
     
     for i in range( num_cores ):
-        proc_list.append( vision.dotMan( img_wh, i*split_point, (i+1)*split_point, threshold ) )
-        
+        strip_list.append( vision.dotManM( img_wh, i*split_point, (i+1)*split_point, threshold, i ) )
+    t1 = time.time()
+    
     for i in range( 78 ):
         x = random.randint(12, img_wh[0])
         y = random.randint(10, img_wh[1])
         r = random.randint(2, 7)
         cv2.circle( img, (x,y), r, (200), -1, 1, 0)
-        
-    data = img.ravel()
+    t2 = time.time() 
+    print "make img", t2-t1
     
-    ret_list = []
-    for proc in proc_list:
-        ret_list.append( proc.push( data ) )
+    ret_q = Queue.Queue()
+    data = img.ravel()
+    for strip in strip_list:
+        thread = threading.Thread( target=strip.push, args=(data, ret_q, ) )
+        proc_list.append( thread )
+        thread.start()
         
-    regs = ret_list[0]
+    for proc in proc_list:
+        proc.join()
+    t3 = time.time()
+    print "proc", t3-t2
+    
+    ret_list = [ None ] * num_cores
+    for _ in range(num_cores):
+        idx, result = ret_q.get()
+        ret_list[ idx ] = result
+        
+    regs = ret_list[0]    
     for i in range(len(ret_list)-1):
         regs = vision.regStitch( regs, i*split_line, ret_list[i+1] )
 
     dets = vision.regs2dets( regs, img, threshold )
-
-    print dets
+    t4 = time.time()
+    print "finalize", t4-t3
+    
+    #print dets
     
     retort = cv2.cvtColor( img, cv2.COLOR_GRAY2RGB )    
     drawDets( retort, dets )
