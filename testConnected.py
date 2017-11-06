@@ -214,6 +214,7 @@ if False:
 if True:
     # Test scatter/Gather processing
     import threading
+    from multiprocessing import Process
     import Queue
     import time
     
@@ -245,9 +246,12 @@ if True:
     ret_q = Queue.Queue()
     data = img.ravel()
     for strip in strip_list:
-        thread = threading.Thread( target=strip.push, args=(data, ret_q, ) )
-        proc_list.append( thread )
-        thread.start()
+        #worker = threading.Thread( target=strip.push, args=(data, ret_q, ) )
+        #worker = threading.Thread( target=strip.push, args=(data, ret_q, ) )
+        worker = Process( target=strip.push, args=(data, ret_q, ) )
+        
+        worker.start()
+        proc_list.append( worker )
         
     for proc in proc_list:
         proc.join()
