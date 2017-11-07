@@ -688,7 +688,11 @@ class detManM( object ):
         
     def push( self, data, que ):
         results = connected( data, self.data_wh, self.threshold, self.start_idx, self.end_idx )
-        que.put( (self.id, results) )
+        ret = ( (self.id, results) )
+        if que==None:
+            return ret
+        else:
+            que.put( ret )
         
 if( __name__ == "__main__" ):
     print" This is not the file you're looking for.  He can go about his business.  Move along."

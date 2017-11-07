@@ -246,7 +246,7 @@ if True:
     t_pool= Pool( processes=num_cores )
     data = img.ravel()
     for strip in strip_list:
-        worker = t_pool.apply_async( strip.push, args=(data, ret_q, ) )
+        worker = t_pool.apply_async( strip.push, args=(data, None, ) )
         #worker = threading.Thread( target=strip.push, args=(data, ret_q, ) )
         #worker = Process( target=strip.push, args=(data, ret_q, ) )
         #worker.start()
@@ -258,7 +258,8 @@ if True:
     
     ret_list = [ None ] * num_cores
     for proc in proc_list:
-        idx, result = proc.get()
+        X = proc.get()
+        print X
         ret_list[ idx ] = result  
         
     regs = ret_list[0]    
