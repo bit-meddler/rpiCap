@@ -667,7 +667,7 @@ def connected( data, data_wh, threshold, data_in, data_out ):
     return regReconcile( reg_list, reg_lut )
  
  
-class dotMan( object ):
+class detMan( object ):
     def __init__( self, data_wh, start_idx, end_idx, threshold ):
         self.data_wh    = data_wh
         self.start_idx  = start_idx
@@ -678,7 +678,7 @@ class dotMan( object ):
         return connected( data, self.data_wh, self.threshold, self.start_idx, self.end_idx )
 
         
-class dotManM( object ):
+class detManM( object ):
     def __init__( self, data_wh, start_idx, end_idx, threshold, id ):
         self.data_wh    = data_wh
         self.start_idx  = start_idx

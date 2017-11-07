@@ -214,8 +214,7 @@ if False:
 if True:
     # Test scatter/Gather processing
     import threading
-    from multiprocessing import Process
-    import Queue
+    from multiprocessing import Process, Queue, Pool
     import time
     
     img_hw = (720,1280)
@@ -232,7 +231,7 @@ if True:
     proc_list = []
     
     for i in range( num_cores ):
-        strip_list.append( vision.dotManM( img_wh, i*split_point, (i+1)*split_point, threshold, i ) )
+        strip_list.append( vision.detManM( img_wh, i*split_point, (i+1)*split_point, threshold, i ) )
     t1 = time.time()
     
     for i in range( 78 ):
@@ -243,25 +242,24 @@ if True:
     t2 = time.time() 
     print "make img", t2-t1
     
-    ret_q = Queue.Queue()
+    ret_q = Queue()
+    t_pool= Pool( processes=num_cores )
     data = img.ravel()
     for strip in strip_list:
+        worker = t_pool.apply_async( strip.push, args=(data, ret_q, ) )
         #worker = threading.Thread( target=strip.push, args=(data, ret_q, ) )
-        #worker = threading.Thread( target=strip.push, args=(data, ret_q, ) )
-        worker = Process( target=strip.push, args=(data, ret_q, ) )
-        
-        worker.start()
+        #worker = Process( target=strip.push, args=(data, ret_q, ) )
+        #worker.start()
         proc_list.append( worker )
         
-    for proc in proc_list:
-        proc.join()
+
     t3 = time.time()
     print "proc", t3-t2
     
     ret_list = [ None ] * num_cores
-    for _ in range(num_cores):
-        idx, result = ret_q.get()
-        ret_list[ idx ] = result
+    for proc in proc_list:
+        idx, result = proc.get()
+        ret_list[ idx ] = result  
         
     regs = ret_list[0]    
     for i in range(len(ret_list)-1):
