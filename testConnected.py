@@ -257,9 +257,12 @@ if True:
     print "proc", t3-t2
     
     ret_list = [ None ] * num_cores
+    t_pool.close()
+    t_pool.join()
+    
     for proc in proc_list:
-        X = proc.get()
-        print X
+        print proc
+        idx, result = proc.get()
         ret_list[ idx ] = result  
         
     regs = ret_list[0]    
