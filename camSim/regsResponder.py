@@ -44,6 +44,7 @@ while( running ):
         if( sz == 3 ):
             # low reg command
             _, reg, val = struct.unpack( ">BBB", data )
+            print( reg, val )
             myRegs[ reg-200 ] = val
             
         if( sz == 5 ):
