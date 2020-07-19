@@ -5,6 +5,7 @@ sys.path.append( os.path.join( _git_root_, "midget", "Python" ) )
 
 
 import numpy as np # It's started....
+from queue import PriorityQueue
 import select
 import socket
 import struct
@@ -13,21 +14,36 @@ import time
 
 from Comms import piCam
 
+# Network setup ----------------------------------------------------
 SERVER_IP      = "127.0.0.1" #"192.168.0.32"
-UDP_PORT_TX    = 1234  # Server's RX
-UDP_PORT_RX    = 1235  # Server's TX
+
 SOCKET_TIMEOUT = 10
 RECV_BUFF_SZ   = 10240 # bigger than a Jumbo Frame
 
+TARGET_ADDR = ( SERVER_IP, piCam.UDP_PORT_TX )
+
 coms_socket = socket.socket( socket.AF_INET, socket.SOCK_DGRAM )
 coms_socket.setsockopt( socket.SOL_SOCKET, socket.SO_REUSEADDR, 1 )
-coms_socket.bind( (SERVER_IP, UDP_PORT_TX) )
+coms_socket.bind( (SERVER_IP, piCam.UDP_PORT_RX) )
 
 CAMERA_ID = SERVER_IP.split(".")[-1]
 
-print( "Dawson up to the plate, a beautiful day here at Wrigley Field..." )
+SELECT_INPUTS = [coms_socket,]
 
-# Listen for incoming message and just repeat them back
+# utils ---------------------------------------------------------------
+
+def hex_( data ):
+    return ':'.join( format(x, '02x') for x in data )
+
+def updateTC():
+    global time_stamp
+    now = time.time()
+    ms = now - int( now )
+    frames = int( ms / FRAME_PERIOD )
+    t = time.localtime( now )
+    time_stamp = [ t.tm_hour, t.tm_min, t.tm_sec, frames ]
+    
+# Timing system to periodically emit Centroids ------------------------
 class Metronome( threading.Thread ):
     
     def __init__( self, the_flag, delay ):
@@ -50,58 +66,88 @@ have_roids.clear()
 
 TEST_PERIOD = 3.0 # 3 secs
 
-# camera state
+timer = None
+
+# camera state --------------------------------------------------
 myRegs = np.zeros( (823,), dtype=np.uint8 )
+REG_DET_CAP, _, _ = piCam.TRAIT_LOCATIONS[ "numdets" ]
+REG_DET_CAP -= 200 # Only time I've ever changed a "Const", whaduya know
+time_stamp = [ 0, 0, 0, 0 ]
+FPS = 60
+FRAME_PERIOD = 1. / FPS
 
-# some internals for counting packets
+# Packet Managment ----------------------------------------------
 roll_count = 0
-packet_num = 0
+send_count = 0
+q_out = PriorityQueue()
 
-def hex_( data ):
-    return ':'.join( format(x, '02x') for x in data )
+# Priorities
+PRIORITY_IMMEDIATE =  1
+PRIORITY_NORMAL    = 10
+PRIORITY_IMAGES    = 50
 
-def packetize( dtype, data, address ):
-    # TODO Simulate breaking big data into several packets
-    # packet_num, num_roids, compression, dtype, roll_count, payload_os
+def packetize( dtype, data ):
     
-    global roll_count, packet_num
-    
-    num_roids = 0
-    
+    global q_out, myRegs
+
     if( dtype > piCam.PACKET_TYPES[ "imagedata" ] ):
-        # a dump, data is just flat bytes.
-        pass
+        q_out.put(
+            ( PRIORITY_NORMAL, (0, dtype, 1, 1, data) )
+        )
     
     elif( dtype == piCam.PACKET_TYPES[ "centroids" ] ):
         # Simulated centroids, data is a ndarray
-        num_roids = len( data )
-        data = data.flatten().tobytes()
         
+        max_dets = myRegs[ REG_DET_CAP ]
+        num_roids = len( data )
+        
+        num_packs, leftover_roids = divmod( num_roids, max_dets )
+        if( leftover_roids > 0 ):
+            num_packs += 1
+
+        packet_no = 1
+        for i in range( 0, num_roids, max_dets ):
+            q_out.put(
+                ( PRIORITY_IMMEDIATE+i, (num_roids, dtype, packet_no, num_packs, data[ i:i+max_dets ].tobytes()) )
+            )
+            packet_no += 1
+            
     elif( dtype == piCam.PACKET_TYPES[ "imagedata" ] ):
-        # Don't know how to do this... will be idx then length of image fragmnt
+        # Same sort of logic as above, but starting from "PRIORITY_IMAGES"
         pass
     
-    header = struct.pack( ">HHBBBB", packet_num, num_roids, 0x04, dtype, roll_count, 8 )
-    
-    msg = header + data
-    sock.sendto( msg, address )
-    
-    #print( hex_( msg )[:90] )
+def packetSend( num_roids, dtype, pack_no, total_packs, data ):
 
-    packet_num += 1
+    global roll_count, send_count, time_stamp
+    
+    num_roids = 0
+
+    msg = piCam.encodePacket( send_count, num_roids, 0x04, dtype, roll_count, time_stamp, pack_no, total_packs, data )
+
+    sock.sendto( msg, TARGET_ADDR )
+    
+    print( hex_( msg )[:90] )
+
+    send_count += 1
     roll_count += 1
     roll_count &= 0x00ff
-
-
+    
 def makeLog( msg ):
     return "*** CAMERA {} {} ***".format( CAMERA_ID, msg ).encode( "ascii" )
 
 
-inputs = [coms_socket,]
-timer = None
+
+# Initalize the camera
+for param, (reg,_,_) in piCam.TRAIT_LOCATIONS.items():
+    default = piCam.CAMERA_CAPABILITIES[ param ].default
+    myRegs[ reg-200 ] = default
+updateTC()
+    
+# Run the core loop
 running = True
+print( "Dawson up to the plate, a beautiful day here at Wrigley Field..." )
 while( running ):
-    readable, _, _ = select.select( inputs, [], [], 0 )
+    readable, _, _ = select.select( SELECT_INPUTS, [], [], 0 )
     for sock in readable:
         data, address = sock.recvfrom( RECV_BUFF_SZ )
 
@@ -124,6 +170,7 @@ while( running ):
                     if( timer is not None ):
                         timer.stop()
                         timer = None
+                        
                 elif( cmd == "single" ):
                     # Send a single image
                     pass
@@ -131,22 +178,24 @@ while( running ):
                 elif( cmd == "stream" ):
                     # Stream Images
                     pass
+                
                 # report
-                packetize( piCam.PACKET_TYPES[ "textslug" ], makeLog( cmd ), address )
+                packetize( piCam.PACKET_TYPES[ "textslug" ], makeLog( cmd ) )
                 
             elif( data in piCam.CAMERA_REQUESTS_REV ):
                 req = piCam.CAMERA_REQUESTS_REV[ data ]
                 if( req == "regslo" ):
-                    packetize( piCam.PACKET_TYPES[ "regslo" ], myRegs[:56].tobytes(), address )
+                    packetize( piCam.PACKET_TYPES[ "regslo" ], myRegs[:56].tobytes() )
                     
                 elif( req == "regshi" ):
-                    packetize( piCam.PACKET_TYPES[ "regshi" ], myRegs.tobytes(), address )
+                    packetize( piCam.PACKET_TYPES[ "regshi" ], myRegs.tobytes() )
                     
                 elif( req == "version" ):
-                    packetize( piCam.PACKET_TYPES[ "version" ], b"DEADBEEEF", address )
+                    packetize( piCam.PACKET_TYPES[ "version" ], b"DEADBEEEF" )
                     
                 elif( req == "hello" ):
-                    packetize( piCam.PACKET_TYPES[ "textslug" ], b"h", address )
+                    # litterally just send an h with no header!
+                    sock.sendto( b"h", TARGET_ADDR )
 
         else:
             if( data[0] == piCam.CHAR_COMMAND_VAL ):
@@ -156,9 +205,9 @@ while( running ):
                 
                 # report
                 msg = makeLog( "Register {} Set to {}".format( reg, val ) )
-                packetize( piCam.PACKET_TYPES[ "textslug" ], msg, address )
+                packetize( piCam.PACKET_TYPES[ "textslug" ], msg )
                 
-            if( data[0] == piCam.SHORT_COMMAND_VAL ):
+            elif( data[0] == piCam.SHORT_COMMAND_VAL ):
                 # High Reg Command
                 _, reg, msb, lsb = struct.unpack( ">BHBB", data )
                 _, _, val = struct.unpack( ">BHh", data )
@@ -168,15 +217,24 @@ while( running ):
                 
                 # report
                 msg = makeLog( "Register {} Set to {}".format( reg, val ) )
-                packetize( piCam.PACKET_TYPES[ "textslug" ], msg, address )
+                packetize( piCam.PACKET_TYPES[ "textslug" ], msg )
             
     if( have_roids.isSet() ):
         # Connected components, Hu moments, Quantize, and a Partridge in a Pear Tree!
-        print( "Sim Centroids" )
+        # Generate some random Dummy Centroid Data
+        updateTC()
+        num = np.random.randint( 5, 35, size=1 )
+        centroids = np.arange( num, dtype=np.uint8 )
+        packetize( piCam.PACKET_TYPES[ "centroids" ], centroids )
         have_roids.clear()
+        
+    # emit packets in queue
+    if( not q_out.empty() ):
+        _, packet = q_out.get()
+        packetSend( *packet )
         
 if( timer is not None ):
     timer.stop()
 
-print( "Sent {} Packets this session".format( packet_num ) )
+print( "Sent {} Packets this session".format( send_count ) )
 print( "What do you think, Sirs?" )
