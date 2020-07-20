@@ -5,6 +5,8 @@ sys.path.append( os.path.join( _git_root_, "midget", "Python" ) )
 
 
 import numpy as np # It's started....
+from numpy.lib import recfunctions as rfn
+
 from queue import PriorityQueue
 import select
 import socket
@@ -12,11 +14,11 @@ import struct
 import threading
 import time
 
-from Comms import piCam
+from Comms import piCam, piComunicate
 
 # Network setup ----------------------------------------------------
-SERVER_IP      = "127.0.0.1" #"192.168.0.32"
-
+LOCAL_IP       = piComunicate.listIPs()[0] # Default realworld IP
+SERVER_IP      = "192.168.0.20"
 SOCKET_TIMEOUT = 10
 RECV_BUFF_SZ   = 10240 # bigger than a Jumbo Frame
 
@@ -24,7 +26,7 @@ TARGET_ADDR = ( SERVER_IP, piCam.UDP_PORT_TX )
 
 coms_socket = socket.socket( socket.AF_INET, socket.SOCK_DGRAM )
 coms_socket.setsockopt( socket.SOL_SOCKET, socket.SO_REUSEADDR, 1 )
-coms_socket.bind( (SERVER_IP, piCam.UDP_PORT_RX) )
+coms_socket.bind( (LOCAL_IP, piCam.UDP_PORT_RX) )
 
 CAMERA_ID = SERVER_IP.split(".")[-1]
 
@@ -61,6 +63,41 @@ class Metronome( threading.Thread ):
     def stop( self ):
         self.running.clear()
         
+CAMERA_RESOLUTION = (1280,720)
+CONV_FRACTIONAL_BYTE = 1./256
+CENTROID_DATA_SIZE = 8 # HBHBBB
+
+def generateCentroids( num ):
+    Xs = np.random.random_sample( num )
+    Xs *= CAMERA_RESOLUTION[0]
+    
+    Ys = np.random.random_sample( num )
+    Ys *= CAMERA_RESOLUTION[1]
+
+    Rs = np.random.random_sample( num )
+    Rs *= 6.5
+
+    Xs, Xf = np.divmod( Xs, 1. )
+    Ys, Yf = np.divmod( Xs, 1. )
+    Rs, Rf = np.divmod( Xs, 1. )
+
+    Xs = Xs.astype( np.uint16 )
+    Ys = Ys.astype( np.uint16 )
+    Rs = Rs.astype( np.uint8  )
+    
+    Xf /= CONV_FRACTIONAL_BYTE
+    Yf /= CONV_FRACTIONAL_BYTE
+    Rf /= CONV_FRACTIONAL_BYTE
+
+    Xf = Xf.astype( np.uint8 )
+    Yf = Yf.astype( np.uint8 )
+    Rf = Rf.astype( np.uint8 )
+    
+    centroids = rfn.merge_arrays( (Xs,Xf,Ys,Yf,Rs,Rf) )
+
+    return centroids.tobytes()
+    
+
 have_roids = threading.Event()
 have_roids.clear()
 
@@ -99,16 +136,18 @@ def packetize( dtype, data ):
         # Simulated centroids, data is a ndarray
         
         max_dets = myRegs[ REG_DET_CAP ]
-        num_roids = len( data )
+        num_roids = len( data ) // CENTROID_DATA_SIZE
         
         num_packs, leftover_roids = divmod( num_roids, max_dets )
         if( leftover_roids > 0 ):
             num_packs += 1
 
         packet_no = 1
-        for i in range( 0, num_roids, max_dets ):
+        slice_sz = max_dets * CENTROID_DATA_SIZE
+        total_sz = num_roids * CENTROID_DATA_SIZE
+        for i in range( 0, total_sz, slice_sz ):
             q_out.put(
-                ( PRIORITY_IMMEDIATE+i, (num_roids, dtype, packet_no, num_packs, data[ i:i+max_dets ].tobytes()) )
+                ( PRIORITY_IMMEDIATE+i, (num_roids, dtype, packet_no, num_packs, data[ i:i+slice_sz ]) )
             )
             packet_no += 1
             
@@ -224,7 +263,7 @@ while( running ):
         # Generate some random Dummy Centroid Data
         updateTC()
         num = np.random.randint( 5, 35, size=1 )
-        centroids = np.arange( num, dtype=np.uint8 )
+        centroids = generateCentroids( num )
         packetize( piCam.PACKET_TYPES[ "centroids" ], centroids )
         have_roids.clear()
         
