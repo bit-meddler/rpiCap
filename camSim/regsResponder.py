@@ -64,7 +64,6 @@ class Metronome( threading.Thread ):
         self.running.clear()
         
 CAMERA_RESOLUTION = (1280,720)
-CONV_FRACTIONAL_BYTE = 1./256
 CENTROID_DATA_SIZE = 8 # HBHBBB
 
 def generateCentroids( num ):
@@ -85,13 +84,15 @@ def generateCentroids( num ):
     Ys = Ys.astype( np.uint16 )
     Rs = Rs.astype( np.uint8  )
     
-    Xf /= CONV_FRACTIONAL_BYTE
-    Yf /= CONV_FRACTIONAL_BYTE
-    Rf /= CONV_FRACTIONAL_BYTE
+    Xf *= 256 # 8-Bit Fraction
+    Yf *= 256
+    Rf *= 128 # 4-Bit Fraction
 
     Xf = Xf.astype( np.uint8 )
     Yf = Yf.astype( np.uint8 )
     Rf = Rf.astype( np.uint8 )
+
+    Rf = np.left_shift( Rf, 4 )
     
     centroids = rfn.merge_arrays( (Xs,Xf,Ys,Yf,Rs,Rf) )
 
@@ -101,7 +102,7 @@ def generateCentroids( num ):
 have_roids = threading.Event()
 have_roids.clear()
 
-TEST_PERIOD = 3.0 # 3 secs
+TEST_PERIOD = 1.5 # 3 secs
 
 timer = None
 
