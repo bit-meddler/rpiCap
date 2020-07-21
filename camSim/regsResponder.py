@@ -159,8 +159,6 @@ def packetize( dtype, data ):
 def packetSend( num_roids, dtype, pack_no, total_packs, data ):
 
     global roll_count, send_count, time_stamp
-    
-    num_roids = 0
 
     msg = piCam.encodePacket( send_count, num_roids, 0x04, dtype, roll_count, time_stamp, pack_no, total_packs, data )
 
