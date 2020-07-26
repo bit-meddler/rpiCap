@@ -77,8 +77,8 @@ def generateCentroids( num ):
     Rs *= 6.5
 
     Xs, Xf = np.divmod( Xs, 1. )
-    Ys, Yf = np.divmod( Xs, 1. )
-    Rs, Rf = np.divmod( Xs, 1. )
+    Ys, Yf = np.divmod( Ys, 1. )
+    Rs, Rf = np.divmod( Rs, 1. )
 
     Xs = Xs.astype( np.uint16 )
     Ys = Ys.astype( np.uint16 )
@@ -96,13 +96,13 @@ def generateCentroids( num ):
     
     centroids = rfn.merge_arrays( (Xs,Xf,Ys,Yf,Rs,Rf) )
 
-    return centroids.tobytes()
+    return centroids
     
 
 have_roids = threading.Event()
 have_roids.clear()
 
-TEST_PERIOD = 1.5 # 3 secs
+TEST_PERIOD = 3 # 3 secs
 
 timer = None
 
@@ -164,7 +164,7 @@ def packetSend( num_roids, dtype, pack_no, total_packs, data ):
 
     sock.sendto( msg, TARGET_ADDR )
     
-    print( hex_( msg )[:90] )
+    print( hex_( msg [0:48] ) )
 
     send_count += 1
     roll_count += 1
@@ -261,9 +261,9 @@ while( running ):
         # Connected components, Hu moments, Quantize, and a Partridge in a Pear Tree!
         # Generate some random Dummy Centroid Data
         updateTC()
-        num = np.random.randint( 5, 35, size=1 )
+        num = np.random.randint( 5, 36, size=1 )
         centroids = generateCentroids( num )
-        packetize( piCam.PACKET_TYPES[ "centroids" ], centroids )
+        packetize( piCam.PACKET_TYPES[ "centroids" ], centroids.tobytes() )
         have_roids.clear()
         
     # emit packets in queue
