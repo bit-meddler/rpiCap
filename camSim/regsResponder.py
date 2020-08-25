@@ -2,6 +2,7 @@
 import os, sys
 _git_root_ = os.path.dirname( os.path.dirname( os.path.dirname( os.path.realpath(__file__) ) ) )
 sys.path.append( os.path.join( _git_root_, "midget", "Python" ) )
+DATA_PATH = os.path.join( _git_root_, "rpiCap", "exampleData" )
 
 
 import numpy as np # It's started....
@@ -16,7 +17,7 @@ import time
 
 from Comms import piCam, piComunicate
 
-# Network setup ----------------------------------------------------
+# Network setup ----------------------------------------------------------------
 LOCAL_IP       = piComunicate.listIPs()[0] # Default realworld IP
 SERVER_IP      = "192.168.0.20"
 SOCKET_TIMEOUT = 10
@@ -32,7 +33,7 @@ CAMERA_ID = SERVER_IP.split(".")[-1]
 
 SELECT_INPUTS = [coms_socket,]
 
-# utils ---------------------------------------------------------------
+# utils ------------------------------------------------------------------------
 
 def hex_( data ):
     return ':'.join( format(x, '02x') for x in data )
@@ -45,7 +46,7 @@ def updateTC():
     t = time.localtime( now )
     time_stamp = [ t.tm_hour, t.tm_min, t.tm_sec, frames ]
     
-# Timing system to periodically emit Centroids ------------------------
+# Timing system to periodically emit Centroids ---------------------------------
 class Metronome( threading.Thread ):
     
     def __init__( self, the_flag, delay ):
@@ -106,7 +107,7 @@ TEST_PERIOD = 3 # 3 secs
 
 timer = None
 
-# camera state --------------------------------------------------
+# camera state -----------------------------------------------------------------
 myRegs = np.zeros( (823,), dtype=np.uint8 )
 REG_DET_CAP, _, _ = piCam.TRAIT_LOCATIONS[ "numdets" ]
 REG_DET_CAP -= 200 # Only time I've ever changed a "Const", whaduya know
@@ -114,7 +115,7 @@ time_stamp = [ 0, 0, 0, 0 ]
 FPS = 60
 FRAME_PERIOD = 1. / FPS
 
-# Packet Managment ----------------------------------------------
+# Packet Managment -------------------------------------------------------------
 roll_count = 0
 send_count = 0
 q_out = PriorityQueue()
@@ -147,9 +148,7 @@ def packetize( dtype, data ):
         slice_sz = max_dets * CENTROID_DATA_SIZE
         total_sz = num_roids * CENTROID_DATA_SIZE
         for i in range( 0, total_sz, slice_sz ):
-            q_out.put(
-                ( PRIORITY_IMMEDIATE+i, (num_roids, dtype, packet_no, num_packs, data[ i:i+slice_sz ]) )
-            )
+            q_out.put( ( PRIORITY_IMMEDIATE+i, (num_roids, dtype, packet_no, num_packs, data[ i:i+slice_sz ]) ) )
             packet_no += 1
             
     elif( dtype == piCam.PACKET_TYPES[ "imagedata" ] ):
