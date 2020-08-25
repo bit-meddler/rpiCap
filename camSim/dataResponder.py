@@ -38,6 +38,9 @@ def hex_( data ):
 
 def encodeCentroids( dets ):
     """ Expects a det list [ [x,y], [x,y]  ], emits packed encoded centroid data"""
+    if( len( dets ) < 1 ):
+        return np.asarray( [], dtype=np.float32 )
+    
     det_array = np.asarray( dets, dtype=np.float32 )
 
     Xs = det_array[:,0]
@@ -81,13 +84,19 @@ class PacketManager( object ):
 
     def packetize( self, dtype, data ):
         if( dtype > piCam.PACKET_TYPES[ "imagedata" ] ):
-            self.q_out.put( (PRIORITY_NORMAL, (0, dtype, 1, 1, data)) )
+            self.q_out.put( (self.PRIORITY_NORMAL, (0, dtype, 1, 1, data)) )
 
         elif (dtype == piCam.PACKET_TYPES[ "centroids" ]):
             # Simulated centroids, data is a ndarray
             num_roids = len( data ) // CENTROID_DATA_SIZE
 
             num_packs, leftover_roids = divmod( num_roids, self.max_roids )
+            
+            if( num_packs == 0 and leftover_roids == 0 ):
+                # Empty Packet
+                self.q_out.put( (self.PRIORITY_IMMEDIATE, (0, dtype, 1, 1, b"")) )
+                return
+            
             if (leftover_roids > 0):
                 num_packs += 1
 
@@ -96,7 +105,7 @@ class PacketManager( object ):
             total_sz = num_roids * CENTROID_DATA_SIZE
             for i in range( 0, total_sz, slice_sz ):
                 self.q_out.put(
-                    (PRIORITY_IMMEDIATE + i, (num_roids, dtype, packet_no, num_packs, data[ i:i + slice_sz ]))
+                    (self.PRIORITY_IMMEDIATE + i, (num_roids, dtype, packet_no, num_packs, data[ i:i + slice_sz ]))
                 )
                 packet_no += 1
 
@@ -117,16 +126,16 @@ class CamSim( object ):
         self.local_ip = local_ip
         self.server_ip = server_ip
 
-        self.cam_id = self.local_ip.splitr(".",1)[1]
+        self.cam_id = self.local_ip.rsplit(".",1)[1]
 
         self.cam_num = cam_num or int( self.cam_id ) % 10
 
         ########
         # Replay
         self.replay = replay_data if replay_data in AVAILABLE_REPLAYS else "calibration"
-        replay_pkl_fq = os.path.join( DATA_PATH, self.replay + "_cam{:0>2}.pik".format( self.cam_num ) )
+        replay_pkl_fq = os.path.join( DATA_PATH, self.replay + ".a2d_cam{:0>2}.pik".format( self.cam_num ) )
         self.frames = []
-        with open( replay_pkl_fq, "wb" ) as fh:
+        with open( replay_pkl_fq, "rb" ) as fh:
             self.frames = pickle.load( fh )
         self.num_frames = len( self.frames )
         self.cur_frame = -1
@@ -156,11 +165,11 @@ class CamSim( object ):
         self.sync.setsockopt( socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, piCam.MCAST_TTL )
         self.sync.setsockopt( socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1 )
         try: # Windows workaround
-            self.sync.bind( (MCAST_GRP, MCAST_PORT) )
+            self.sync.bind( (piCam.MCAST_GRP, piCam.MCAST_PORT) )
         except socket.error:
-            self.sync.bind( ("", MCAST_PORT) )
+            self.sync.bind( ("", piCam.MCAST_PORT) )
         self.sync.setsockopt( socket.SOL_IP, socket.IP_MULTICAST_IF, socket.inet_aton( self.local_ip ) )
-        self.sync.setsockopt( socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, socket.inet_aton( MCAST_GRP ) + socket.inet_aton( .local_ip ) )
+        self.sync.setsockopt( socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, socket.inet_aton( piCam.MCAST_GRP ) + socket.inet_aton( self.local_ip ) )
 
         self._ins = [ self.sync, self.coms ]
 
@@ -172,7 +181,7 @@ class CamSim( object ):
         self.pacman = PacketManager()
 
         # Timecode
-        self.timecode = SimpleTimecode()
+        self.timecode = SimpleTimecode( 25, multi=2 )
 
         # camera state
         self.capturing = False
@@ -195,7 +204,7 @@ class CamSim( object ):
         # Run the core loop
         running = True
         print( "Dawson up to the plate, a beautiful day here at Wrigley Field..." )
-        print( "Camera {} playing {} as '{}'".format( self.cam_id, self.replay, self.cam_num ) )
+        print( "Camera {} playing '{}' as id {}".format( self.cam_id, self.replay, self.cam_num ) )
 
         while( running ):
             readable, _, _ = select.select( self._ins, [], [], 0 )
@@ -204,20 +213,21 @@ class CamSim( object ):
                 if( sock == self.sync ):
                     # Drop everything and send a packet
                     data, address = sock.recvfrom( RECV_BUFF_SZ )
-                    cmd, val = struct.unpack( "s4I", data )
-
-                    if( cmd == "TICK" ):
+                    cmd, val = struct.unpack( "4sI", data )
+                    if( cmd == b"TICK" ):
                         self.cur_frame = val % self.num_frames
+                        self.timecode.setQSM( val )
+                        print( "ticked: {}".format( self.timecode.toString() ) )
                         if( self.capturing ):
                             centroids = encodeCentroids( self.frames[ self.cur_frame ] )
                             self.pacman.packetize( piCam.PACKET_TYPES[ "centroids" ], centroids.tobytes() )
                             break # Jump to emit packets
 
-                    elif( cmd == "ALL1" ):
+                    elif( cmd == b"ALL1" ):
                         self.capturing = True
                         self.pacman.packetize( piCam.PACKET_TYPES[ "textslug" ], self.makeLog( "Start Capturing" ) )
 
-                    elif (cmd == "ALL0"):
+                    elif (cmd == b"ALL0"):
                         self.capturing = False
                         self.pacman.packetize( piCam.PACKET_TYPES[ "textslug" ], self.makeLog( "Stop Capturing" ) )
 
@@ -253,7 +263,7 @@ class CamSim( object ):
                                 pass
 
                             # report
-                            self.pacman.packetize( piCam.PACKET_TYPES[ "textslug" ], makeLog( cmd ) )
+                            self.pacman.packetize( piCam.PACKET_TYPES[ "textslug" ], self.makeLog( cmd ) )
 
                         elif( data in piCam.CAMERA_REQUESTS_REV ):
                             req = piCam.CAMERA_REQUESTS_REV[ data ]
@@ -298,10 +308,10 @@ class CamSim( object ):
 
             # emit packets in queue
             if( not self.pacman.q_out.empty() ):
-                _, packet = q_out.get()
+                _, packet = self.pacman.q_out.get()
                 self.packetSend( *packet )
 
-        print( "Sent {} Packets this session".format( send_count ) )
+        print( "Sent {} Packets this session".format( self.pacman.send_count ) )
         print( "What do you think, Sirs?" )
 
 
