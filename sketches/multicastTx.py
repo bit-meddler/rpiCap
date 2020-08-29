@@ -14,21 +14,21 @@ def main():
 
     sock.setsockopt( socket.SOL_SOCKET, socket.SO_REUSEADDR, 1 )
     #sock.setsockopt( socket.SOL_SOCKET, socket.SO_REUSEPORT, 1 )
-    
+
     sock.setsockopt( socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, MCAST_TTL ) 
     #sock.setsockopt( socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1 )
 
     #sock.bind( (MCAST_GRP, MCAST_PORT) )
 
     tick = bytes( "TICK", "utf-8" )
-    
+
     count = 0
     while True:
         msg = struct.pack( "4sI", tick, count )
         sock.sendto( msg, (MCAST_GRP, MCAST_PORT) )
         print( "sent '{}".format( msg ) )
         count += 1
-        time.sleep( 2 )
-        
+        time.sleep( 0.1 ) # Ok up to nearly 100fps in pure Python!
+
 if( __name__ == "__main__" ):
     main()
