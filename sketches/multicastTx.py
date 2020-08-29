@@ -22,6 +22,10 @@ def main():
 
     tick = bytes( "TICK", "utf-8" )
 
+    # Start Cameras
+    sock.sendto( struct.pack( "4sI", bytes( "ALL1", "utf-8" ), 0 ), 
+(MCAST_GRP, MCAST_PORT) )
+
     count = 0
     while True:
         msg = struct.pack( "4sI", tick, count )
