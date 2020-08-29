@@ -67,51 +67,81 @@ def encodeCentroids( dets ):
 
     Rf = np.left_shift( Rf, 4 )
 
+    # TODO: Add width, height bytes for 10-Byte message, HB, HB, B, B, BB - X, Y, W, H, R
     return rfn.merge_arrays( (Xs, Xf, Ys, Yf, Rs, Rf) )
 
 
 class PacketManager( object ):
     # Priorities
-    PRIORITY_IMMEDIATE = 1
+    PRIORITY_URGENT =  1
     PRIORITY_NORMAL = 10
     PRIORITY_IMAGES = 50
 
-    def __init__( self, max_roids=None ):
+    # Reg locations of params (reg, sz, hi/lo)
+    IDX_DET_CAP = piCam.TRAIT_LOCATIONS[ "numdets" ][0] - 200
+    IDX_DGM_CAP = piCam.TRAIT_LOCATIONS[ "mtu" ][0]     - 200
+
+    def __init__( self, cam_regs ):
         self.roll_count = 0
         self.send_count = 0
         self.q_out = PriorityQueue()
-        self.max_roids = max_roids or 10
+        self.cam_regs = cam_regs
 
     def packetize( self, dtype, data ):
+        """
+        Fragment 'data' to fit into packet specification (such as max dets / packet,
+        Jumbo Frames).  'data' is Bytes-Like, so could be a retort string, or a flat
+        ndarray of det data or RAW image (8-Bit Bitmap)
+
+        :param dtype: (int) Message Type
+        :param data:  (bytes) Message
+        """
         if( dtype > piCam.PACKET_TYPES[ "imagedata" ] ):
             self.q_out.put( (self.PRIORITY_NORMAL, (0, dtype, 1, 1, data)) )
 
         elif (dtype == piCam.PACKET_TYPES[ "centroids" ]):
+            # Get params from cam regs
+            max_roids = self.cam_regs[ self.IDX_DET_CAP ]
+
             # Simulated centroids, data is a ndarray
             num_roids = len( data ) // CENTROID_DATA_SIZE
 
-            num_packs, leftover_roids = divmod( num_roids, self.max_roids )
+            num_packs, leftover_roids = divmod( num_roids, max_roids )
             
             if( num_packs == 0 and leftover_roids == 0 ):
                 # Empty Packet
-                self.q_out.put( (self.PRIORITY_IMMEDIATE, (0, dtype, 1, 1, b"")) )
+                self.q_out.put( (self.PRIORITY_URGENT, (0, dtype, 1, 1, b"")) )
                 return
             
             if (leftover_roids > 0):
                 num_packs += 1
 
             packet_no = 1
-            slice_sz = self.max_roids * CENTROID_DATA_SIZE
+            slice_sz = max_roids * CENTROID_DATA_SIZE
             total_sz = num_roids * CENTROID_DATA_SIZE
             for i in range( 0, total_sz, slice_sz ):
                 self.q_out.put(
-                    (self.PRIORITY_IMMEDIATE + i, (num_roids, dtype, packet_no, num_packs, data[ i:i + slice_sz ]))
+                    (self.PRIORITY_URGENT + packet_no, (num_roids, dtype, packet_no, num_packs, data[ i:i + slice_sz ]))
                 )
                 packet_no += 1
 
         elif (dtype == piCam.PACKET_TYPES[ "imagedata" ]):
-            # Same sort of logic as above, but starting from "PRIORITY_IMAGES"
-            pass
+            # Same sort of logic as above, but queued with "PRIORITY_IMAGES", so centroids and messages go first while
+            # the image queue is cleared
+            max_dgm = (self.cam_regs[ IDX_DGM_CAP ] * 1024 ) + 1500
+            dat_len = len( data )
+            num_packs, leftovers = divmod( dat_len, max_dgm )
+
+            # if it doesn't perfectly fit into the MTU
+            if( leftovers > 0 ):
+                num_packs += 1
+
+            packet_no = 1
+            for i in range( 0, dat_len, max_dgm ):
+                self.q_out.put(
+                    (self.PRIORITY_IMAGES + packet_no, (0, dtype, packet_no, num_packs, data[ i:i + max_dgm ]))
+                )
+                packet_no += 1
 
     def incCount( self ):
         self.send_count += 1
@@ -121,13 +151,11 @@ class PacketManager( object ):
 
 class CamSim( object ):
 
-    def __init__( self, local_ip, server_ip, cam_num=None, replay_data=None ):
+    def __init__( self, local_ip, server_ip, cam_num=None, replay_data=None, id_overide=None ):
         # basic settings
         self.local_ip = local_ip
         self.server_ip = server_ip
-
-        self.cam_id = self.local_ip.rsplit(".",1)[1]
-
+        self.cam_id = id_overide or self.local_ip.rsplit(".",1)[1]
         self.cam_num = cam_num or int( self.cam_id ) % 10
 
         ########
@@ -138,7 +166,7 @@ class CamSim( object ):
         with open( replay_pkl_fq, "rb" ) as fh:
             self.frames = pickle.load( fh )
         self.num_frames = len( self.frames )
-        self.cur_frame = -1
+        self.cur_frame  = -1
 
         ######
         # regs
@@ -171,19 +199,13 @@ class CamSim( object ):
         self.sync.setsockopt( socket.SOL_IP, socket.IP_MULTICAST_IF, socket.inet_aton( self.local_ip ) )
         self.sync.setsockopt( socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, socket.inet_aton( piCam.MCAST_GRP ) + socket.inet_aton( self.local_ip ) )
 
+        # Input socks for Select
         self._ins = [ self.sync, self.coms ]
 
         #################
         # Other Internals
-        # Packetization
-        self.REG_DET_CAP, _, _ = piCam.TRAIT_LOCATIONS[ "numdets" ]
-        self.IDX_DET_CAP = self.REG_DET_CAP - 200
-        self.pacman = PacketManager()
-
-        # Timecode
+        self.pacman = PacketManager( self.regs )
         self.timecode = SimpleTimecode( 25, multi=2 )
-
-        # camera state
         self.capturing = False
 
 
@@ -193,8 +215,8 @@ class CamSim( object ):
                                   pack_no, total_packs, data )
 
         self.coms.sendto( msg, self.target_addr )
-
-        print( hex_( msg[ 0:48 ] ) )
+        # Header Debug print
+        # print( hex_( msg[ 0:48 ] ) )
         self.pacman.incCount()
 
     def makeLog( self, msg ):
@@ -212,12 +234,14 @@ class CamSim( object ):
                 # Sync Msg
                 if( sock == self.sync ):
                     # Drop everything and send a packet
-                    data, address = sock.recvfrom( RECV_BUFF_SZ )
+                    data, _ = sock.recvfrom( RECV_BUFF_SZ )
                     cmd, val = struct.unpack( "4sI", data )
                     if( cmd == b"TICK" ):
                         self.cur_frame = val % self.num_frames
                         self.timecode.setQSM( val )
-                        print( "ticked: {}".format( self.timecode.toString() ) )
+                        # Debug Ticks
+                        if( val % 50 == 0 ):
+                            print( "ticked: {}".format( self.timecode.toString() ) )
                         if( self.capturing ):
                             centroids = encodeCentroids( self.frames[ self.cur_frame ] )
                             self.pacman.packetize( piCam.PACKET_TYPES[ "centroids" ], centroids.tobytes() )
@@ -236,7 +260,7 @@ class CamSim( object ):
 
                 # C&C Msg
                 if( sock == self.coms ):
-                    data, address = sock.recvfrom( RECV_BUFF_SZ )
+                    data, _ = sock.recvfrom( RECV_BUFF_SZ )
 
                     if( data == b"bye" ): # Quick exit
                         running = False
@@ -244,8 +268,9 @@ class CamSim( object ):
                         continue
 
                     # understand the data
-                    sz = len( data )
-                    if( sz == 1 ):
+                    if( len( data ) == 1 ):
+                        # One Byte Commands are of the GET or EXE nature
+
                         if( data in piCam.CAMERA_COMMANDS_REV ):
                             cmd = piCam.CAMERA_COMMANDS_REV[ data ]
                             if( cmd == "start" ):
@@ -277,16 +302,13 @@ class CamSim( object ):
                                 self.pacman.packetize( piCam.PACKET_TYPES[ "version" ], b"DEADBEEEF" )
 
                             elif( req == "hello" ):
-                                # litterally just send an h with no header!
+                                # literally just send an h with no header!
                                 self.coms.sendto( b"h", self.target_addr )
 
                     else:
                         if( data[0] == piCam.CHAR_COMMAND_VAL ):
                             # low reg command
                             _, reg, val = struct.unpack( ">BBB", data )
-                            if( reg == self.REG_DET_CAP ):
-                                # det cap changed
-                                self.pacman.max_roids = val
                             self.regs[ reg-200 ] = val
 
                             # report
@@ -327,9 +349,10 @@ if( __name__ == "__main__"):
     parser.add_argument( "-s", action="store", dest="server_ip", default=SERVER_IP, help="Server's ip" )
     parser.add_argument( "-l", action="store", dest="local_ip", default=LOCAL_IP, help="Host IP (on same subnet as camera" )
     parser.add_argument( "-r", action="store", dest="replay", default=REPLAY, help="Example Data to replay" )
+    parser.add_argument( "-i", action="store", dest="id_overide", default=None, help="Camera Id to simulate (Default: modulus of ip/24)" )
 
     args = parser.parse_args()
 
 
-    cam = CamSim( args.local_ip, args.server_ip, replay_data=args.replay )
+    cam = CamSim( args.local_ip, args.server_ip, replay_data=args.replay, id_overide=args.id_overide )
     cam.run()
