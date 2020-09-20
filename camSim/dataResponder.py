@@ -40,7 +40,7 @@ def encodeCentroids( dets ):
     """ Expects a det list [ [x,y], [x,y]  ], emits packed encoded centroid data"""
     if( len( dets ) < 1 ):
         return np.asarray( [], dtype=np.float32 )
-    
+
     det_array = np.asarray( dets, dtype=np.float32 )
 
     Xs = det_array[:,0]
@@ -107,12 +107,12 @@ class PacketManager( object ):
             num_roids = len( data ) // CENTROID_DATA_SIZE
 
             num_packs, leftover_roids = divmod( num_roids, max_roids )
-            
+
             if( num_packs == 0 and leftover_roids == 0 ):
                 # Empty Packet
                 self.q_out.put( (self.PRIORITY_URGENT, (0, dtype, 1, 1, b"")) )
                 return
-            
+
             if (leftover_roids > 0):
                 num_packs += 1
 
@@ -151,7 +151,7 @@ class PacketManager( object ):
 
 class CamSim( object ):
 
-    def __init__( self, local_ip, server_ip, cam_num=None, replay_data=None, id_overide=None ):
+    def __init__( self, local_ip, server_ip, cam_num=None, replay_data=None, id_overide=None, stride=None ):
         # basic settings
         self.local_ip = local_ip
         self.server_ip = server_ip
@@ -161,6 +161,7 @@ class CamSim( object ):
         ########
         # Replay
         self.replay = replay_data if replay_data in AVAILABLE_REPLAYS else "calibration"
+        self.stride = stride or 0
         replay_pkl_fq = os.path.join( DATA_PATH, self.replay + ".a2d_cam{:0>2}.pik".format( self.cam_num ) )
         self.frames = []
         with open( replay_pkl_fq, "rb" ) as fh:
@@ -226,7 +227,7 @@ class CamSim( object ):
         # Run the core loop
         running = True
         print( "Dawson up to the plate, a beautiful day here at Wrigley Field..." )
-        print( "Camera {} playing '{}' as id {}".format( self.cam_id, self.replay, self.cam_num ) )
+        print( "Camera {} playing '{}' as id {}, skipping {} frames.".format( self.cam_id, self.replay, self.cam_num, self.stride ) )
 
         while( running ):
             readable, _, _ = select.select( self._ins, [], [], 0 )
@@ -237,8 +238,8 @@ class CamSim( object ):
                     data, _ = sock.recvfrom( RECV_BUFF_SZ )
                     cmd, val = struct.unpack( "4sI", data )
                     if( cmd == b"TICK" ):
-                        self.cur_frame = val % self.num_frames
-                        self.timecode.setQSM( val )
+                        self.cur_frame = (val *(1+self.stride)) % self.num_frames
+                        self.timecode.setQSM( self.cur_frame )
                         # Debug Ticks
                         if( val % 50 == 0 ):
                             print( "ticked: {}".format( self.timecode.toString() ) )
@@ -346,13 +347,14 @@ if( __name__ == "__main__"):
     LOCAL_IP = ips[0] if len(ips)>0 else "192.168.0.32"
 
     parser = argparse.ArgumentParser()
-    parser.add_argument( "-s", action="store", dest="server_ip", default=SERVER_IP, help="Server's ip" )
-    parser.add_argument( "-l", action="store", dest="local_ip", default=LOCAL_IP, help="Host IP (on same subnet as camera" )
-    parser.add_argument( "-r", action="store", dest="replay", default=REPLAY, help="Example Data to replay" )
-    parser.add_argument( "-i", action="store", dest="id_overide", default=None, help="Camera Id to simulate (Default: modulus of ip/24)" )
+    parser.add_argument( "-s", "--server", action="store", dest="server_ip",  default=SERVER_IP, help="Server's ip" )
+    parser.add_argument( "-l", "--local",  action="store", dest="local_ip",   default=LOCAL_IP,  help="Host IP (on same subnet as camera" )
+    parser.add_argument( "-r", "--replay", action="store", dest="replay",     default=REPLAY,    help="Example Data to replay" )
+    parser.add_argument( "-i", "--camid",  action="store", dest="id_overide", default=None,      help="Camera Id to simulate (Default: modulus of ip/24)" )
+    parser.add_argument( "-k", "--skip",   action="store", dest="stride",     default=0,         help="Number of frames to skip when replaying. For 100fps file, skip 3 to get realtime at 25fps Sync." )
 
     args = parser.parse_args()
 
 
-    cam = CamSim( args.local_ip, args.server_ip, replay_data=args.replay, id_overide=args.id_overide )
+    cam = CamSim( args.local_ip, args.server_ip, replay_data=args.replay, id_overide=args.id_overide, stride=args.stride )
     cam.run()
