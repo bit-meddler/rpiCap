@@ -351,7 +351,7 @@ if( __name__ == "__main__"):
     parser.add_argument( "-l", "--local",  action="store", dest="local_ip",   default=LOCAL_IP,  help="Host IP (on same subnet as camera" )
     parser.add_argument( "-r", "--replay", action="store", dest="replay",     default=REPLAY,    help="Example Data to replay" )
     parser.add_argument( "-i", "--camid",  action="store", dest="id_overide", default=None,      help="Camera Id to simulate (Default: modulus of ip/24)" )
-    parser.add_argument( "-k", "--skip",   action="store", dest="stride",     default=0,         help="Number of frames to skip when replaying. For 100fps file, skip 3 to get realtime at 25fps Sync." )
+    parser.add_argument( "-k", "--skip",   action="store", dest="stride",     default=0,         help="Number of frames to skip when replaying. For 100fps file, skip 3 to get realtime at 25fps Sync.", type=int )
 
     args = parser.parse_args()
 
