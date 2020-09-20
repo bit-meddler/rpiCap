@@ -1,3 +1,4 @@
+import argparse
 import socket
 import struct
 import time
@@ -9,30 +10,35 @@ MCAST_TTL  = 6
 HOST_IP = "192.168.0.20"
 BUF_SZ = 1024
 
-def main():
+def main( fps=None ):
+    # Timing
+    target_fps = fps or 25
+    period = 1. / float( target_fps )
+    count = 0
+    
+    # Socket
     sock = socket.socket( socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP )
-
     sock.setsockopt( socket.SOL_SOCKET, socket.SO_REUSEADDR, 1 )
-    #sock.setsockopt( socket.SOL_SOCKET, socket.SO_REUSEPORT, 1 )
-
     sock.setsockopt( socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, MCAST_TTL ) 
-    #sock.setsockopt( socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1 )
 
-    #sock.bind( (MCAST_GRP, MCAST_PORT) )
-
+    # Prep header
     tick = bytes( "TICK", "utf-8" )
 
     # Start Cameras
-    sock.sendto( struct.pack( "4sI", bytes( "ALL1", "utf-8" ), 0 ), 
-(MCAST_GRP, MCAST_PORT) )
+    sock.sendto( struct.pack( "4sI", bytes( "ALL1", "utf-8" ), 0 ), (MCAST_GRP, MCAST_PORT) )
 
-    count = 0
+    # Main loop
     while True:
         msg = struct.pack( "4sI", tick, count )
         sock.sendto( msg, (MCAST_GRP, MCAST_PORT) )
-        print( "sent '{}".format( msg ) )
+        if( (count % target_fps) == 0 ):
+            print( "sent TICK {}".format( count ) )
         count += 1
-        time.sleep( 0.1 ) # Ok up to nearly 100fps in pure Python!
+        time.sleep( period ) # Ok up to nearly 100fps in pure Python!
 
 if( __name__ == "__main__" ):
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument( "-r", "--rate", action="store", dest="fps", default=25, help="Frame rate to tick at. (Default: 25)", type=int )
+
+    args = parser.parse_args()
+    main( fps=args.fps )
