@@ -1,0 +1,5 @@
+# compiling sdl2 using file
+g++ -Wall -o "%e" "%f" `sdl-config --cflags --libs` -lSDL2
+
+# compiling lib to shared object
+g++ -fPIC -shared vision.cpp -o vision.so
