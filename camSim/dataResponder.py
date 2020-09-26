@@ -55,7 +55,7 @@ def encodeCentroids( dets ):
 
     Xs = Xs.astype( np.uint16 )
     Ys = Ys.astype( np.uint16 )
-    Rs = Rs.astype( np.uint8 )
+    Rs = Rs.astype( np.uint8  )
 
     Xf *= 256  # 8-Bit Fraction
     Yf *= 256
@@ -67,7 +67,7 @@ def encodeCentroids( dets ):
 
     Rf = np.left_shift( Rf, 4 )
 
-    # TODO: Add width, height bytes for 10-Byte message, HB, HB, B, B, BB - X, Y, W, H, R
+    # TODO: Add width, height bytes for full 10-Byte message, HB, HB, B, B, BB = X, Y, W, H, R
     return rfn.merge_arrays( (Xs, Xf, Ys, Yf, Rs, Rf) )
 
 
@@ -227,7 +227,7 @@ class CamSim( object ):
         # Run the core loop
         running = True
         print( "Dawson up to the plate, a beautiful day here at Wrigley Field..." )
-        print( "Camera {} playing '{}' as id {}, skipping {} frames.".format( self.cam_id, self.replay, self.cam_num, self.stride ) )
+        print( "Camera {} playing '{}' data as id {}, skipping {} frames.".format( self.cam_id, self.replay, self.cam_num, self.stride ) )
 
         while( running ):
             readable, _, _ = select.select( self._ins, [], [], 0 )
@@ -241,7 +241,7 @@ class CamSim( object ):
                         self.cur_frame = (val *(1+self.stride)) % self.num_frames
                         self.timecode.setQSM( self.cur_frame )
                         # Debug Ticks
-                        if( val % 50 == 0 ):
+                        if( val % 50 == 0 ): # about 2 secs with current test harness
                             print( "ticked: {}".format( self.timecode.toString() ) )
                         if( self.capturing ):
                             centroids = encodeCentroids( self.frames[ self.cur_frame ] )
@@ -334,7 +334,7 @@ class CamSim( object ):
                 _, packet = self.pacman.q_out.get()
                 self.packetSend( *packet )
 
-        print( "Sent {} Packets this session".format( self.pacman.send_count ) )
+        print( "Sent {} Packets during the experiment".format( self.pacman.send_count ) )
         print( "What do you think, Sirs?" )
 
 
