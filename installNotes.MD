@@ -18,7 +18,8 @@ Because I keep bricking my pi trying to write this stuff.
   - `git clone https://github.com/bit-meddler/rpiCap.git`
 7. Install Python dependancies
   - `pip3 install -r \code\Gimli\requirements.txt`
-  - This will be slow as PyZMQ builds from source
+  - Currently we can't pip install PySide2, if pip fails you need to manually install all the deps, for Qt apt-get it:
+    - `sudo apt-get install --upgrade python3-pyside2.QtCore python3-pyside2.QtGui python3-pyside2.QtWidgets python3-pyside2.QtOpenGL`
 8. Install C++ dev tools
   - Can't remember this for the life of me :(
   - gcc
