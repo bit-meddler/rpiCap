@@ -1,5 +1,5 @@
 # compiling sdl2 using file
-g++ -Wall -o "%e" "%f" `sdl-config --cflags --libs` -lSDL2
+g++ -Wall -o "%e" "%f" -Wno-unused-variable `sdl-config --cflags --libs` -lSDL2 -mfpu=neon
 
 # compiling lib to shared object
 g++ -fPIC -shared vision.cpp -o vision.so

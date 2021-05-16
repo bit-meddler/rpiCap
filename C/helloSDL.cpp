@@ -25,12 +25,6 @@ timespec TimeDelta( timespec start, timespec end )
 int main( int argc, char* args[] ) {
     // Just your average typical first compiled program
     printf("Testing Connected components !\n" ) ;
-
-    int a, b, c ;
-    a = 2 ;
-    b = 6 ;
-    c = vision::sum( a, b ) ; // have I linked vision correctly?
-    printf( "%d + %d = %d", a, b, c ) ;
     
     // init SDL
     if( SDL_Init( SDL_INIT_VIDEO ) < 0 ) {
@@ -51,11 +45,11 @@ int main( int argc, char* args[] ) {
     SDL_PixelFormat *pixfmt = bmp->format ;
     int bpp = pixfmt->BitsPerPixel ;
 
-    int num_px = sizeof( *pixfmt ) ;
+    int num_px = sizeof( bmp->pixels ) ;
     
     fprintf( stdout,
              "Image '%s'\nx:%d, y:%d row:%d, bit-depth: %d, size: %d.\n",
-             img_path_fq, w, h, row, bpp, num_px
+             img_path_fq.c_str(), w, h, row, bpp, num_px
     ) ;
     
     for( int i=0; i < 16; i++ ) {
@@ -76,12 +70,14 @@ int main( int argc, char* args[] ) {
     clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
 
     // Test 1, just the whole image
-    regions = vision::ConnectedComponents( bmp->pixels, w, h, 0, num_px, threshold, 50, gutters ) ;
+    unsigned char* image_data = static_cast<unsigned char*>( bmp->pixels ) ;
+    uint16_t vec_size = 50 ;
+    regions = vision::ConnectedComponents( image_data, w, h, 0, num_px, threshold, vec_size, gutters ) ;
 
     clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
 
     tm_delta = TimeDelta( tm_start, tm_end ) ;
-    fprintf( stdout, "Time %d:%d \n", tm_delta.tv_sec, tm_delta.tv_nsec ) ;
+    fprintf( stdout, "Time %d.%d \n", tm_delta.tv_sec, tm_delta.tv_nsec / 1000 ) ;
 
     SDL_FreeSurface( bmp ) ;
 

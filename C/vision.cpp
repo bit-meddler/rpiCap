@@ -2,12 +2,13 @@
 #define __VISION__
 
 // Testing NEON Vs nieve dark px skipping __TEST_NEON__ / __TEST_NORMAL__
-#define __TEST_NORMAL__
+#define __TEST_NEON__
 
 #include <cmath>
 #include <vector>
 #include <set>
 #include <map>
+#include <cstring>
 
 #include <arm_neon.h>
 
@@ -18,7 +19,7 @@ struct simpleDet {
     uint8_t w, h ;
 } ;
 // type Helpers for ROIs
-typedef std::vector< simpleDet > tROIvec ;
+typedef std::vector< simpleDet > tDetvec ;
 
 
 /*
@@ -82,14 +83,15 @@ int sum( int a, int b ) {
     return a + b ;
 }
 
-tROIvec ConnectedComponents( unsigned char  &img,           // image to analyse
+tROIvec ConnectedComponents( unsigned char* &img,           // image to analyse
                              const uint16_t w,              // img width
                              const uint16_t h,              // img height
                              const uint16_t img_in,         // Start idx of the 'slice' to analyse (inclusive)
                              const uint16_t img_out,        // End idx of the 'slice' to analyse (exclusive)
                              const unsigned char threshold, // Blob Brightness
+                             const uint16_t vec_size,       //
                              // returns
-                             tROIset &gutterballs,          // Regions that touch the first or last row, might merge
+                             tROIset &gutterballs           // Regions that touch the first or last row, might merge
 )
 {
     size_t      idx       = 0 ;     // index into img
@@ -111,7 +113,7 @@ tROIvec ConnectedComponents( unsigned char  &img,           // image to analyse
     bool        inserting = 0 ;     // are we placing a ROI into the list
     bool        merging   = 0 ;     // are we merging to an existing ROI
     
-    tROIvec     reg_vec ;           // vector of ROIs
+    tROIvec     reg_list ;          // vector of ROIs
     tROImap     reg_lut ;           // Map of ROI.id that need to merge
     tROImap     mergers ;           // Regions that have merged (Debug)
 
@@ -135,9 +137,12 @@ tROIvec ConnectedComponents( unsigned char  &img,           // image to analyse
     uint8x16_t img_slice   ;
     uint8x8_t  merge_bits  ;
     uint8_t    any_above = 0 ;
+    
     while( !any_above ) {
         // load Img slice
-        img_slice = (uint8x16_t *) img[ idx ] ;
+        // What's wrong with that? img_slice = (uint8x16_t) img[ idx ] ;
+        
+        memcpy( &img_slice, &img[ idx ], 16 ) ; // this can't be fast :(
         // test for greatness - this should optimize into NEON, right?
         mask_vector = img_slice > threshold_vector ;
 
@@ -152,8 +157,9 @@ tROIvec ConnectedComponents( unsigned char  &img,           // image to analyse
     }
     #endif
 
-
-    printf( "hot px found at %d.\n", idx ) ;
+    tmp_y = idx / w ;
+    tmp_x = idx % w ;
+    printf( "hot px found at idx:%d (x%d, y%d).\n", idx, tmp_x, tmp_y ) ;
     return reg_list ;
 }
                                             
