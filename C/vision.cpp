@@ -1,8 +1,8 @@
 #ifndef __VISION__
 #define __VISION__
 
-// Testing NEON Vs nieve dark px skipping __TEST_NEON__ / __TEST_NORMAL__
-#define __TEST_NORMAL__
+// Testing NEON Vs nieve dark px skipping __TEST_NEON__ / __TEST_NORMAL__ / __TEST_BAD__
+#define __TEST_NEON__
 
 #include <cmath>
 #include <vector>
@@ -10,6 +10,7 @@
 #include <map>
 #include <cstring>
 
+// the neon header causes problems when -o3 is switched in.
 #ifdef __TEST_NEON__
 #include <arm_neon.h>
 #endif
@@ -31,7 +32,7 @@ typedef std::vector< simpleDet > Detvec_t ;
  */
  
 // Optimize type of line data
-typedef int line_t; // test uint16_t uint32_t
+typedef uint16_t line_t; // test int uint16_t uint32_t
 
 extern const line_t ROI_BIG_NUM = 65535;
 extern const line_t ROI_NO_ID   = 60666;
@@ -108,42 +109,6 @@ typedef std::set< line_t >                     RoiIdSet_t ;
 typedef std::map< line_t, line_t >             RoiIdMap_t ;
 typedef std::map< line_t, line_t >::iterator   RoiIdIt_t ;
 
-void neon() {
-    #ifdef __TEST_ignore__
-    // Test 1, just skip pix
-    while( img[ idx ] <= threshold ) {
-        ++idx ;
-    }
-    #endif
-
-    #ifdef __TEST_NEON__
-    // test 2, NEON
-    uint8x16_t threshold_vector = vdupq_n_u8( threshold ) ;
-    uint8x16_t mask_vector ;
-    uint8x16_t img_slice   ;
-    uint8x8_t  merge_bits  ;
-    uint8_t    any_above = 0 ;
-    
-    while( !any_above ) {
-        // load Img slice
-        // What's wrong with that? img_slice = (uint8x16_t) img[ idx ] ;
-        
-        memcpy( &img_slice, &img[ idx ], 16 ) ; // this can't be fast :(
-        // test for greatness - this should optimize into NEON, right?
-        mask_vector = img_slice > threshold_vector ;
-
-        // https://stackoverflow.com/questions/15389539/fastest-way-to-test-a-128-bit-neon-register-for-a-value-of-0-using-intrinsics
-        merge_bits = vorr_u8( vget_low_u8( mask_vector ), vget_high_u8( mask_vector ) ) ;
-        any_above  = vget_lane_u8( vpmax_u8( merge_bits, merge_bits ), 0 ) ;
-        idx += 16 ;
-    }
-    idx -= 16 ; // be nice to get idx of fist non-zero somehow
-    while( img[ idx ] <= threshold ) {
-        ++idx ;
-    }
-    #endif
-}
-
 
 RoiVec_t ConnectedComponents(
     uint8_t*      &img,              // image to analyse
@@ -161,7 +126,8 @@ RoiVec_t ConnectedComponents(
     int         img_idx   = 0 ;      // index into img (remember it's flat)
     int         row_start = 0 ;      // index of current row start
     int         row_end   = 0 ;      // index of current row end
-    line_t      tmp_x, tmp_y  ;      // temp x,y of a bright pixel
+    line_t      tmp_x     = 0 ;      // temp x,y of a bright pixel
+    line_t      tmp_y     = 0 ;      // Shuttup compiler, I know it will get initialized
     line_t      last_y    = 0 ;      // last y we encountered
 
     // Regions & Region list stuff
@@ -210,9 +176,42 @@ RoiVec_t ConnectedComponents(
 
     while( !ended ) {
         // Skip dark pixels
+        
+#ifdef __TEST_NEON__
+        // NEON
+        uint8x16_t threshold_vector = vdupq_n_u8( threshold ) ;
+        uint8x16_t mask_vector ;
+        uint8x16_t img_slice   ;
+        uint8x8_t  merge_bits  ;
+        uint8_t    any_above = 0 ;
+        
+        while( !any_above ) {
+            // load Img slice
+            img_slice = vld1q_u8( img_ptr ) ;
+            
+            //memcpy( &img_slice, img_ptr, 16 ) ; // this can't be fast :(
+            
+            // test for greatness - this should optimize into NEON, right?
+            mask_vector = img_slice >= threshold_vector ;
+
+            // https://stackoverflow.com/questions/15389539/fastest-way-to-test-a-128-bit-neon-register-for-a-value-of-0-using-intrinsics
+            merge_bits = vorr_u8( vget_low_u8( mask_vector ), vget_high_u8( mask_vector ) ) ;
+            any_above  = vget_lane_u8( vpmax_u8( merge_bits, merge_bits ), 0 ) ;
+            img_ptr += 16 ;
+        }
+        img_ptr -= 16 ; // be nice to get idx of fist non-zero somehow
+#endif
+#ifndef __TEST_BAD__
         while( *img_ptr < threshold && img_ptr < img_out_ptr ) {
             ++img_ptr ;
         }
+#endif
+#ifdef __TEST_BAD__
+        while( img[ img_idx ] < threshold && img_idx < img_out ) {
+            ++img_ptr ;
+            ++img_idx ;
+        }
+#endif
         if( img_ptr >= img_out_ptr ) {
             ended = 1 ;
             break ;
