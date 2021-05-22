@@ -315,7 +315,7 @@ RoiVec_t ConnectedComponents(
         }
     }
     return region_list ;
-}
+} // ConnectedComponents
 
 
 void test_cc() {
@@ -377,7 +377,7 @@ void test_structs() {
             Y.sl.x, Y.sl.m, Y.sl.n ) ;
 }
 
-void main() {
+int main() {
     test_cc() ;
 }
 
