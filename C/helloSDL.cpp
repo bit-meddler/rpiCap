@@ -22,31 +22,59 @@ timespec TimeDelta( timespec start, timespec end ) {
 }
 
 
-int main( int argc, char* args[] ) {
-    // Just your average typical first compiled program
-    printf("Testing Connected components !\n" ) ;
-
-    bool show_img = 0 ;
-    bool show_info = 0 ;
-    int show_time = 5000 ;
+void SDL_DrawFilledCircle( SDL_Renderer *renderer, int x, int y, int r ) {
+    // You're kidding, SDL can't draw a circle! WTF!
+    const int rad2 = r * 2 ;
+    const int rsq  = r * r ;
+    int dx, dy ;
     
-    for( int i = 1 ; i<argc; ){
-        printf( "{%d} %s\n", i, args[i] ) ;
-        if( std::strcmp( args[i], "-s" ) == 0 ){
-            show_img = 1 ;
-            i++ ;
-        }
-        if( std::strcmp( args[i], "-i" ) == 0 ){
-            show_info = 1 ;
-            i++ ;
-        }
-        printf( "{%d} %s\n", i, args[i] ) ;
-        if( std::strcmp( args[i], "-t" ) == 0 ) {
-            // Str 2 int of 
-            i++ ;
-            printf( "{%d} %s\n", i, args[i] ) ;
+    for( int w = 0; w < rad2; w++ ) {
+        for( int h = 0; h < rad2; h++ ) {
+            dx = r - w ;
+            dy = r - h ;
+            if( ((dx*dx)+(dy*dy)) <= rsq ){
+                SDL_RenderDrawPoint( renderer, x - dx, y - dy ) ;
+            }
         }
     }
+} // Draw Circle
+
+
+int main( int argc, char* args[] ) {
+    // Just your average typical first compiled program
+    printf("Testing Computer Vision !\n" ) ;
+
+    bool show_img  = 0 ;
+    bool show_info = 0 ;
+    int  show_time = 5000 ;
+    
+    for( int i=1; i<argc; ) {
+        printf( "{%d} %s\n", i, args[i] ) ;
+        
+        if( (std::strcmp( args[i], "--help" ) == 0) ||
+            (std::strcmp( args[i], "-h" ) == 0) ) {
+            printf( "'-i' Display Info\n" ) ;
+            printf( "'-s' Display Image (needs X session)\n" ) ;
+            printf( "'-t MILLISECONDS' display image for this long\n" ) ;
+            printf( "No switches just runs a short test\n" ) ;
+        }
+        
+        if( std::strcmp( args[i], "-s" ) == 0 ) {
+            show_img = 1 ;
+        }
+        
+        if( std::strcmp( args[i], "-i" ) == 0 ) {
+            show_info = 1 ;
+        }
+        
+        if( std::strcmp( args[i], "-t" ) == 0 ) {
+            show_img = 1 ;
+            i++ ;
+            show_time = atoi( args[i] ) ;
+        }
+        
+        i++ ;
+    } // args
     
     // init SDL
     if( SDL_Init( SDL_INIT_VIDEO ) < 0 ) {
@@ -78,7 +106,7 @@ int main( int argc, char* args[] ) {
     vision::RoiVec_t   regions ;
     vision::RoiIdSet_t gutters ;
 
-    // Profile connected components 
+    // Profile Computer Vision Algos 
     timespec tm_start, tm_end, tm_delta ;   
     
     // Test 1, just the whole image
@@ -86,6 +114,7 @@ int main( int argc, char* args[] ) {
     size_t   vec_size   = 50 ;
     uint8_t  threshold  = 167 ;
 
+	// Profile Connected Components
     clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
 
     regions = vision::ConnectedComponents( image_data, w, h, 0, num_px, threshold, vec_size, gutters ) ;
@@ -93,9 +122,20 @@ int main( int argc, char* args[] ) {
     clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
 
     tm_delta = TimeDelta( tm_start, tm_end ) ;
-    printf( "Time %lds %ld.%ldms \n", tm_delta.tv_sec, tm_delta.tv_nsec / 1000000, tm_delta.tv_nsec / 1000 ) ; // 1ms = ns / 1e6
-    printf( "%d Regions\n", regions.size() ) ;
-    
+    printf( "Computed %d Regions\n", regions.size() ) ;
+    printf( "Time %lds %ld.%03ldms \n", tm_delta.tv_sec, tm_delta.tv_nsec / 1000000, tm_delta.tv_nsec / 1000 ) ; // 1ms = ns / 1e6
+
+	// Profile Circle-Fitting
+    clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
+
+    detections = vision::CircleFit( image_data, regions, w, threshold ) ;
+
+    clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
+
+    tm_delta = TimeDelta( tm_start, tm_end ) ;
+    printf( "Copmuted Detections in\n" ) ;
+    printf( "Time %lds %ld.%03ldms \n", tm_delta.tv_sec, tm_delta.tv_nsec / 1000000, tm_delta.tv_nsec / 1000 ) ; // 1ms = ns / 1e6
+
     if( show_img ) {
         // make an SDL Window to show the results
         SDL_Window* win = SDL_CreateWindow(
@@ -128,6 +168,14 @@ int main( int argc, char* args[] ) {
             SDL_RenderDrawRect( renderer, &r ) ;
         }
 
+        // Report detections
+        SDL_SetRenderDrawColor( renderer, 0, 255, 0, 48 ) ;
+        vision::simpleDet D ;
+        for( size_t i = 0; i < regions.size(); i++ ) {
+            D = detections[i] ;
+            SDL_DrawFilledCircle( renderer, (int)D.x, (int)D.y, (int)D.r ) ;
+        }
+
         // Swap to screen and show
         SDL_RenderPresent( renderer ) ;
 
@@ -141,9 +189,12 @@ int main( int argc, char* args[] ) {
     
     if( show_info ) {
         vision::simpleROI R ;
+        vision::simpleDet D ;
         for( size_t i = 0; i < regions.size(); i++ ) {
             R = regions[i] ;
-            fprintf( stdout, "{%d} %d: x%d, y%d, m%d, n%d\n", i, R.id, R.bb_x, R.bb_y, R.bb_m, R.bb_n ) ;
+            D = detections[i] ;
+            printf( "{%d} %d: x%d, y%d, m%d, n%d\n", i, R.id, R.bb_x, R.bb_y, R.bb_m, R.bb_n ) ;
+            printf( "{%d} centroid %4f, %4f, %4f\n", i, D.x, D.y, D.r ) ;
         }
     }
     
