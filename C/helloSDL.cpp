@@ -45,6 +45,8 @@ int main( int argc, char* args[] ) {
     printf("Testing Computer Vision !\n" ) ;
 
     bool show_img  = 0 ;
+    bool show_dets = 1 ;
+    bool show_regs = 1 ;
     bool show_info = 0 ;
     int  show_time = 5000 ;
     
@@ -55,12 +57,26 @@ int main( int argc, char* args[] ) {
             (std::strcmp( args[i], "-h" ) == 0) ) {
             printf( "'-i' Display Info\n" ) ;
             printf( "'-s' Display Image (needs X session)\n" ) ;
+            printf( "'-sr' only show the Regions\n" ) ;
+            printf( "'-sd' only show the Centroids\n" ) ;
             printf( "'-t MILLISECONDS' display image for this long\n" ) ;
             printf( "No switches just runs a short test\n" ) ;
         }
         
         if( std::strcmp( args[i], "-s" ) == 0 ) {
             show_img = 1 ;
+        }
+        
+        
+        if( std::strcmp( args[i], "-sr" ) == 0 ) {
+            show_img  = 1 ;
+            show_dets = 0 ;
+        }
+        
+        
+        if( std::strcmp( args[i], "-sd" ) == 0 ) {
+            show_img  = 1 ;
+            show_regs = 0 ;
         }
         
         if( std::strcmp( args[i], "-i" ) == 0 ) {
@@ -156,27 +172,31 @@ int main( int argc, char* args[] ) {
         SDL_Texture* tex = SDL_CreateTextureFromSurface( renderer, bmp ) ;
         SDL_RenderCopy( renderer, tex, NULL, NULL ) ;
         
-        // Report detections
-        SDL_SetRenderDrawColor( renderer, 255, 0, 0, 255 ) ;
-        SDL_Rect r;
-        vision::simpleROI R ;
-        for( size_t i = 0; i < regions.size(); i++ ) {
-            R = regions[i] ;
-            r.x = R.bb_x ;
-            r.y = R.bb_y ;
-            r.w = R.bb_m - R.bb_x;
-            r.h = R.bb_n - R.bb_y;
-            SDL_RenderDrawRect( renderer, &r ) ;
+        // Report regions
+        if( show_regs ) {
+            SDL_SetRenderDrawColor( renderer, 255, 0, 0, 255 ) ;
+            SDL_Rect r;
+            vision::simpleROI R ;
+            for( size_t i = 0; i < regions.size(); i++ ) {
+                R = regions[i] ;
+                r.x = R.bb_x ;
+                r.y = R.bb_y ;
+                r.w = R.bb_m - R.bb_x;
+                r.h = R.bb_n - R.bb_y;
+                SDL_RenderDrawRect( renderer, &r ) ;
+            }
         }
-
+        
         // Report detections
-        SDL_SetRenderDrawColor( renderer, 0, 255, 0, 48 ) ;
-        vision::simpleDet D ;
-        for( size_t i = 0; i < regions.size(); i++ ) {
-            D = detections[i] ;
-            SDL_DrawFilledCircle( renderer, (int)D.x, (int)D.y, (int)D.r ) ;
+        if( show_dets ) {
+            SDL_SetRenderDrawColor( renderer, 0, 255, 0, 48 ) ;
+            vision::simpleDet D ;
+            for( size_t i = 0; i < regions.size(); i++ ) {
+                D = detections[i] ;
+                SDL_DrawFilledCircle( renderer, (int)D.x, (int)D.y, (int)D.r ) ;
+            }
         }
-
+        
         // Swap to screen and show
         SDL_RenderPresent( renderer ) ;
 

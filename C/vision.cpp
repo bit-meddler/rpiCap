@@ -395,7 +395,8 @@ DetVec_t CircleFit(
     float_t        m_00R ;            // Area Reciprical
     float_t        val, pxi, pxj ;    // temps
     float_t        x, y, r, score ;   // Centroid of the RoI
-
+    double_t       L1, L2, a, b, c, d;// Used to compute Radius
+    
     // Region we are processing
     simpleROI      region ;           // Temp Region     
     uint8_t        w, h ;             // BB dimentions
@@ -411,7 +412,8 @@ DetVec_t CircleFit(
         // reset vars
         m_00 = m_01 = m_10 = m_00R = pxi = pxj = val = x = y = r = score = 0.0f ;
 		m_11 = m_02 = m_20 = u_02 = u_20 = u_11 = 0.0f ;
-
+        L1 = L2 = a = b = c = d = 0.0f ;
+        
         // examine region BB some dims could be 1 px
         for( size_t j = region.bb_y; j <= region.bb_n; j++ ) {
             img_ptr = (uint8_t*) img_in + (j * img_w) ;
@@ -445,16 +447,14 @@ DetVec_t CircleFit(
 
         // Compute radius ----------------------------------------------
         // Implementing equations from ImageMagik Script 'moments'
+        // Cos all the scientific methods give bogus results!
 
         // Compute Central moments
         u_11 = m_11 - (x * m_01) ;
         u_20 = m_20 - (x * m_10) ;
         u_02 = m_02 - (y * m_01) ;
 
-
-
         // Solve the Eigen values
-        double_t L1, L2, a, b, c, d ;
         a = 2.0f * m_00R ;
         b = u_20 + u_02  ;
         c = 4.0 * (u_11 * u_11) ;
@@ -463,31 +463,15 @@ DetVec_t CircleFit(
         // Magik
         L1 = sqrt( a * (b + sqrt( c + d )) ) ;
         L2 = sqrt( a * (b - sqrt( c + d )) ) ;
-        printf( "Magik: L1:%3f, L2%3f\n", L1, L2 ) ;
-        
-        // Wikipedia
-        // wiki wants them normalized
-        u_11 = (m_11 * m_00R) - (x*y) ;
-        u_20 = (m_20 * m_00R) - (x*x) ;
-        u_02 = (m_02 * m_00R) - (y*y) ;
-        
-        b = (u_20 + u_02) / 2.0f  ;
-        c = 4.0 * (u_11 * u_11) ;
-        d = (u_20 - u_02) * (u_20 - u_02) ;
-        
-        L1 = b + (sqrt( c + d ) / 2.0f ) ;
-        L2 = b - (sqrt( c + d ) / 2.0f ) ;
         
         r = ((float) w + h) / 4.0f ;
-        
-        printf( "Wiki: L1:%3f, L2%3f, r:%3f\n", L1, L2, r ) ;
 
-        r = 0.5f ;
+        if( L1 > 0.0f ) {
+            r = L1 ;
+        }
 
 		// Circularity Score -------------------------------------------
-        // from Hu Circularity
-        score = (m_00*m_00) / ( M_PI_2 * (u_20 + u_02) ) ;
-        //printf( "Score %3f\n", score ) ;
+        // being clever requies both Eigen Values to be correct
 		score = (float) std::min( w, h ) / (float) std::max( w, h ) ;
 
 
