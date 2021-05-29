@@ -18,11 +18,11 @@
 namespace vision {
 
 struct simpleDet {
-    float_t x, y, r ;
+    float_t x, y, r, score ;
     uint8_t w, h ;
 } ;
 // type Helpers for ROIs
-typedef std::vector< simpleDet > Detvec_t ;
+typedef std::vector< simpleDet > DetVec_t ;
 
 
 /*
@@ -105,6 +105,7 @@ struct simpleROI {
 
 // type Helpers for ROIs
 typedef std::vector< simpleROI >               RoiVec_t ;
+typedef std::vector< simpleROI >::iterator     RoiVecIt_t ;
 typedef std::set< line_t >                     RoiIdSet_t ;
 typedef std::map< line_t, line_t >             RoiIdMap_t ;
 typedef std::map< line_t, line_t >::iterator   RoiIdIt_t ;
@@ -369,6 +370,96 @@ RoiVec_t ConnectedComponents(
     }
     return region_list ;
 } // ConnectedComponents
+
+
+DetVec_t CircleFit(
+    uint8_t*       &img,             // image to analyse  
+    const RoiVec_t &regions,         // Vector of RoIs containing Blobs
+    const int      img_w,            // image width
+    const uint8_t  threshold         // Blob Brightness
+    // Returns Vector of Centroids
+) {
+    // Use Hu-Moments to compute the Centroid of the bright RoI's we have found
+
+	DetVec_t       ret;              // Return vector
+	ret.reserve(regions.size());
+
+	// image navigation
+    const uint8_t* img_in = &img[0] ; // ref to 1st Pixel
+    uint8_t*       img_ptr ;          // Pixel being processed
+
+	// Image Moments
+    float_t        m_00, m_01, m_10 ; // Raw Moments
+    float_t        m_00R ;            // Area Reciprical
+    float_t        val, pxi, pxj ;    // temps
+    float_t        x, y, r, score ;   // Centroid of the RoI
+
+    // Region we are processing
+    simpleROI      region ;           // Temp Region     
+    uint8_t        w, h ;             // BB dimentions
+    
+    // for each region compute moments
+    for( size_t r_idx = 0; r_idx < regions.size(); r_idx++ ) {
+        region = regions[ r_idx ] ;
+        
+        // bb Dims
+        w = region.bb_m - region.bb_x ;
+        h = region.bb_n - region.bb_y ;
+        
+        // reset vars
+        m_00 = m_01 = m_10 = m_00R = pxi = pxj = val = x = y = r = score = 0.0f ;
+        
+        // examine region BB some dims could be 1 px
+        for( size_t j = region.bb_y; j <= region.bb_n; j++ ) {
+            img_ptr = (uint8_t*) img_in + (j * img_w) ;
+            img_ptr += region.bb_x ;
+            for( size_t i = region.bb_x; i <= region.bb_m; i++ ) {
+                if( *img_ptr > threshold ) {
+                   // acumulate statistics
+                   val = (float) *img_ptr ;
+                   pxi = val * i ;
+                   pxj = val * j ;
+                   m_00 += val ;
+                   m_10 += pxi ;
+                   m_01 += pxj ;
+
+                }
+                ++img_ptr ;
+            }
+        }
+
+		// Compute Centroid --------------------------------------------
+        // compute 1st order moments
+        m_00R = (1.0f / m_00) + 1e-8 ;
+        x = m_10 * m_00R ;
+        y = m_01 * m_00R ;
+
+		// fix center (center of a pixel, not in the up-left corner)
+		x += 0.5f ;
+		y += 0.5f ;
+
+        // Compute radius ----------------------------------------------
+		// Nieve
+		r = ((float) w + h) / 4.0f ;
+
+		// Circularity Score -------------------------------------------
+		score = (float) std::min( w, h ) / (float) std::max( w, h ) ;
+
+        // Add to return
+        simpleDet newDet ;
+        newDet.x = x ;
+        newDet.y = y ;
+        newDet.r = r ;
+        newDet.score = score ;
+        newDet.w = w ;
+        newDet.h = h ;
+
+        ret.push_back( newDet ) ;
+    }
+
+    // Done
+    return ret ;
+} // CircleFit
 
 } // namespace vision
 #endif
