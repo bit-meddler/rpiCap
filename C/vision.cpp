@@ -453,10 +453,29 @@ DetVec_t CircleFit(
         u_20 = m_20 - (x * m_10) + 1e-8 ;
         u_02 = m_02 - (y * m_01) + 1e-8 ;
 
-		// Now what?
+		// Wikipedia says... divide by m_00
+        u_11 *= m_00R ;
+        u_20 *= m_00R ;
+        u_02 *= m_00R ;
 
-		// Nieve
-		r = ((float) w + h) / 4.0f ;
+        // Solve the Eigen values
+        double_t L1, L2, a, b, c, X ;
+        a = (u_20 + u_02) / 2.0f ;
+        b = 4.0 * (u_11 * u_11) ;
+        c = (u_20 - u_02) * (u_20 - u_02) ;
+
+        L1 = a + (sqrt( b + c )  / 2.0f) ;
+        L2 = a - (sqrt( b + c )  / 2.0f) ;
+        
+        // Ecentrisity score?
+        X = sqrt( 1.0f - (L2 / L1) ) ;
+
+        L1 = sqrt(fabs(L1)) ;
+        L2 = sqrt(fabs(L2)) ;
+        
+        printf( "Wiki: L1:%3f, L2%3f, X:%3f\n", L1, L2, X ) ;
+
+        r = L1 ;
 
 		// Circularity Score -------------------------------------------
 		score = (float) std::min( w, h ) / (float) std::max( w, h ) ;
