@@ -419,7 +419,7 @@ DetVec_t CircleFit(
             for( size_t i = region.bb_x; i <= region.bb_m; i++ ) {
                 if( *img_ptr > threshold ) {
                    // acumulate statistics
-                   val = (float) *img_ptr ;
+                   val = (float) (*img_ptr - threshold) ;
                    pxi = val * i ;
                    pxj = val * j ;
 
@@ -443,37 +443,38 @@ DetVec_t CircleFit(
         x = m_10 * m_00R ;
         y = m_01 * m_00R ;
 
-		// fix center (center of a pixel, not in the up-left corner)
-		x += 0.5f ;
-		y += 0.5f ;
-
         // Compute radius ----------------------------------------------
-        // Compute Central moments
-        u_11 = m_11 - (x * m_01) + 1e-8 ;
-        u_20 = m_20 - (x * m_10) + 1e-8 ;
-        u_02 = m_02 - (y * m_01) + 1e-8 ;
+        // Implementing equations from Raphael.Candelier.fr/?blog=Image%20Moments
 
-        // Implementing equations from "Image Moment Models for Extended Object Tracking" Yao & Dani, eq 5
-		// Paper says... divide by m_00
-        u_11 *= m_00R ;
-        u_20 *= m_00R ;
-        u_02 *= m_00R ;
+        // Compute Central moments - Have wikipedia's central moments been messing this up?
+        u_11 = (m_20 * m_00R) - (x * y) ;
+        u_20 = (m_20 * m_00R) - (x*x) ;
+        u_02 = (m_02 * m_00R) - (y*y) ;
 
         // Solve the Eigen values
-        double_t L1, L2, a, b, c, X ;
+        double_t L1, L2, a, b, c ;
         a = (u_20 + u_02) ;
         b = 4.0 * (u_11 * u_11) ;
         c = (u_20 - u_02) * (u_20 - u_02) ;
 
-        L1 = 2.0f * (a + sqrt( b + c )) ;
-        L2 = 2.0f * (a - sqrt( b + c )) ;
+        L1 = sqrt( 8.0f * (a + sqrt( b + c )) ) ;
+        L2 = sqrt( 8.0f * (a - sqrt( b + c )) ) ;
 
-        printf( "Yao: L1:%3f, L2%3f\n", L1, L2 ) ;
+        printf( "Raphael: L1:%3f, L2%3f\n", L1, L2 ) ;
 
         r = 0.5f ;
 
 		// Circularity Score -------------------------------------------
+        // from Hu Circularity
+        score = (m_00*m_00) / ( M_PI_2 * (u_20 + u_02) ) ;
+        printf( "Score %3f\n", score ) ;
 		score = (float) std::min( w, h ) / (float) std::max( w, h ) ;
+
+
+		// fix center (center of a pixel, not in the up-left corner)
+		x += 0.5f ;
+		y += 0.5f ;
+
 
         // Add to return
         simpleDet newDet ;
