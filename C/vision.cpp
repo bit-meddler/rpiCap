@@ -439,35 +439,36 @@ DetVec_t CircleFit(
 
 		// Compute Centroid --------------------------------------------
         // compute 1st order moments
-        m_00R = (1.0f / m_00) + 1e-8 ;
+        m_00R = (1.0f / m_00) ;
         x = m_10 * m_00R ;
         y = m_01 * m_00R ;
 
         // Compute radius ----------------------------------------------
-        // Implementing equations from Raphael.Candelier.fr/?blog=Image%20Moments
+        // Implementing equations from ImageMagik Script 'moments'
 
-        // Compute Central moments - Have wikipedia's central moments been messing this up?
-        u_11 = (m_20 * m_00R) - (x * y) ;
-        u_20 = (m_20 * m_00R) - (x*x) ;
-        u_02 = (m_02 * m_00R) - (y*y) ;
+        // Compute Central moments
+        u_11 = m_11 - (x * m_01) ;
+        u_20 = m_20 - (x * m_10) ;
+        u_02 = m_02 - (y * m_01) ;
 
         // Solve the Eigen values
-        double_t L1, L2, a, b, c ;
-        a = (u_20 + u_02) ;
-        b = 4.0 * (u_11 * u_11) ;
-        c = (u_20 - u_02) * (u_20 - u_02) ;
+        double_t L1, L2, a, b, c, d ;
+        a = 2.0f * m_00R ;
+        b = u_20 + u_02  ;
+        c = 4.0 * (u_11 * u_11) ;
+        d = (u_20 - u_02) * (u_20 - u_02) ;
 
-        L1 = sqrt( 8.0f * (a + sqrt( b + c )) ) ;
-        L2 = sqrt( 8.0f * (a - sqrt( b + c )) ) ;
+        L1 = sqrt( a * (b + sqrt( c + d )) ) ;
+        L2 = sqrt( a * (b - sqrt( c + d )) ) ;
 
-        printf( "Raphael: L1:%3f, L2%3f\n", L1, L2 ) ;
+        printf( "Magik: L1:%3f, L2%3f\n", L1, L2 ) ;
 
         r = 0.5f ;
 
 		// Circularity Score -------------------------------------------
         // from Hu Circularity
         score = (m_00*m_00) / ( M_PI_2 * (u_20 + u_02) ) ;
-        printf( "Score %3f\n", score ) ;
+        //printf( "Score %3f\n", score ) ;
 		score = (float) std::min( w, h ) / (float) std::max( w, h ) ;
 
 
