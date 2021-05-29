@@ -451,6 +451,8 @@ DetVec_t CircleFit(
         u_20 = m_20 - (x * m_10) ;
         u_02 = m_02 - (y * m_01) ;
 
+
+
         // Solve the Eigen values
         double_t L1, L2, a, b, c, d ;
         a = 2.0f * m_00R ;
@@ -458,10 +460,27 @@ DetVec_t CircleFit(
         c = 4.0 * (u_11 * u_11) ;
         d = (u_20 - u_02) * (u_20 - u_02) ;
 
+        // Magik
         L1 = sqrt( a * (b + sqrt( c + d )) ) ;
         L2 = sqrt( a * (b - sqrt( c + d )) ) ;
-
         printf( "Magik: L1:%3f, L2%3f\n", L1, L2 ) ;
+        
+        // Wikipedia
+        // wiki wants them normalized
+        u_11 = (m_11 * m_00R) - (x*y) ;
+        u_20 = (m_20 * m_00R) - (x*x) ;
+        u_02 = (m_02 * m_00R) - (y*y) ;
+        
+        b = (u_20 + u_02) / 2.0f  ;
+        c = 4.0 * (u_11 * u_11) ;
+        d = (u_20 - u_02) * (u_20 - u_02) ;
+        
+        L1 = b + (sqrt( c + d ) / 2.0f ) ;
+        L2 = b - (sqrt( c + d ) / 2.0f ) ;
+        
+        r = ((float) w + h) / 4.0f ;
+        
+        printf( "Wiki: L1:%3f, L2%3f, r:%3f\n", L1, L2, r ) ;
 
         r = 0.5f ;
 
