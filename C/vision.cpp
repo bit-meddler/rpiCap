@@ -390,6 +390,8 @@ DetVec_t CircleFit(
 
 	// Image Moments
     float_t        m_00, m_01, m_10 ; // Raw Moments
+	float_t        m_11, m_02, m_20 ; // 2nd Order Moments
+	float_t        u_02, u_20, u_11 ; // Central moments
     float_t        m_00R ;            // Area Reciprical
     float_t        val, pxi, pxj ;    // temps
     float_t        x, y, r, score ;   // Centroid of the RoI
@@ -408,7 +410,8 @@ DetVec_t CircleFit(
         
         // reset vars
         m_00 = m_01 = m_10 = m_00R = pxi = pxj = val = x = y = r = score = 0.0f ;
-        
+		m_11 = m_02 = m_20 = u_02 = u_20 = u_11 = 0.0f ;
+
         // examine region BB some dims could be 1 px
         for( size_t j = region.bb_y; j <= region.bb_n; j++ ) {
             img_ptr = (uint8_t*) img_in + (j * img_w) ;
@@ -419,10 +422,16 @@ DetVec_t CircleFit(
                    val = (float) *img_ptr ;
                    pxi = val * i ;
                    pxj = val * j ;
+
+				   // 1st Order
                    m_00 += val ;
                    m_10 += pxi ;
                    m_01 += pxj ;
-
+				   m_11 += pxi * j ;
+                   
+				   // 2nd Order
+                   m_20 += pxi * i ;
+                   m_02 += pxj * j ;
                 }
                 ++img_ptr ;
             }
@@ -439,6 +448,13 @@ DetVec_t CircleFit(
 		y += 0.5f ;
 
         // Compute radius ----------------------------------------------
+        // Compute Central moments
+        u_11 = m_11 - (x * m_01) + 1e-8 ;
+        u_20 = m_20 - (x * m_10) + 1e-8 ;
+        u_02 = m_02 - (y * m_01) + 1e-8 ;
+
+		// Now what?
+
 		// Nieve
 		r = ((float) w + h) / 4.0f ;
 

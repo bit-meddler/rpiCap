@@ -105,6 +105,7 @@ int main( int argc, char* args[] ) {
     // data from cc
     vision::RoiVec_t   regions ;
     vision::RoiIdSet_t gutters ;
+    vision::DetVec_t   detections ;
 
     // Profile Computer Vision Algos 
     timespec tm_start, tm_end, tm_delta ;   
