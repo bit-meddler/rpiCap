@@ -1,7 +1,7 @@
-# add Midget into the path
+# add Gimli into the path
 import os, sys
 _git_root_ = os.path.dirname( os.path.dirname( os.path.dirname( os.path.realpath(__file__) ) ) )
-sys.path.append( os.path.join( _git_root_, "midget", "Python" ) )
+sys.path.append( os.path.join( _git_root_, "Gimli", "Python" ) )
 DATA_PATH = os.path.join( _git_root_, "rpiCap", "exampleData" )
 
 
