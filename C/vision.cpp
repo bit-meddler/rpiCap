@@ -1,8 +1,8 @@
 #ifndef __VISION__
 #define __VISION__
 
-// Testing NEON Vs nieve dark px skipping __TEST_NEON__ / __TEST_NORMAL__ / __TEST_BAD__
-#define __TEST_NEON__
+// Testing different skipping methods __DEFAULT_SKIPPING__ / __TEST_NORMAL__ / __TEST_BAD__
+#define __DEFAULT_SKIPPING__
 
 #include <cmath>
 #include <vector>
@@ -10,8 +10,7 @@
 #include <map>
 #include <cstring>
 
-// the neon header causes problems when -o3 is switched in.
-#ifdef __TEST_NEON__
+#ifdef __DEFAULT_SKIPPING__
 #include <arm_neon.h>
 #endif
 
@@ -21,8 +20,34 @@ struct simpleDet {
     float_t x, y, r, score ;
     uint8_t w, h ;
 } ;
-// type Helpers for ROIs
 typedef std::vector< simpleDet > DetVec_t ;
+
+struct packedCentroids8 {
+    uint16_t  xd ; // Decimal part of X
+    uint8_t   xf ; // Fractional part of X
+    
+    uint16_t  yd ; // Decimal part of Y
+    uint8_t   yf ; // Fractional part of Y
+
+    uint8_t   rd ; // Decimal part of Radius
+    uint8_t   rf ; // Fractional part of Radius
+} ;
+typedef std::vector< packedCentroids8 > Roid8Vec_t ;
+
+struct packedCentroids10 {
+    uint16_t  xd ; // Decimal part of X
+    uint8_t   xf ; // Fractional part of X
+    
+    uint16_t  yd ; // Decimal part of Y
+    uint8_t   yf ; // Fractional part of Y
+
+    uint8_t   rd ; // Decimal part of Radius
+    uint8_t   rf ; // Fractional part of Radius
+
+    uint8_t   w ;  // RoI Width
+    uint8_t   h ;  // RoI Height
+} ;
+typedef std::vector< packedCentroids10 > Roid10Vec_t ;
 
 
 /*
@@ -31,11 +56,8 @@ typedef std::vector< simpleDet > DetVec_t ;
  * y and n are rows
  */
  
-// Optimize type of line data
-typedef uint16_t line_t; // test int uint16_t uint32_t
-
-extern const line_t ROI_BIG_NUM = 65535;
-extern const line_t ROI_NO_ID   = 60666;
+// Optimize type of line data ? Will this make a difference for computation?
+typedef uint16_t line_t; // test: int, uint16_t, uint32_t,
 
 struct scanline {
     line_t x ; // first hot pixel
@@ -57,6 +79,10 @@ struct scanline {
                (other.m >= x && other.m <= m) ;
     }
 } ;
+
+extern const line_t ROI_BIG_NUM = 65535 ;
+extern const line_t ROI_INVALID = 60666 ;
+extern const line_t ROI_NO_ID   = 60000 ;
 
 struct simpleROI {
     // Bounding Box 4
@@ -178,7 +204,7 @@ RoiVec_t ConnectedComponents(
     while( !ended ) {
         // Skip dark pixels
         
-#ifdef __TEST_NEON__
+#ifdef __DEFAULT_SKIPPING__
         // NEON
         uint8x16_t threshold_vector = vdupq_n_u8( threshold ) ;
         uint8x16_t mask_vector ;
@@ -189,6 +215,7 @@ RoiVec_t ConnectedComponents(
         while( !any_above ) {
             // load Img slice
             img_slice = vld1q_u8( img_ptr ) ;
+            img_ptr += 16 ;
             
             //memcpy( &img_slice, img_ptr, 16 ) ; // this can't be fast :(
             
@@ -198,9 +225,9 @@ RoiVec_t ConnectedComponents(
             // https://stackoverflow.com/questions/15389539/fastest-way-to-test-a-128-bit-neon-register-for-a-value-of-0-using-intrinsics
             merge_bits = vorr_u8( vget_low_u8( mask_vector ), vget_high_u8( mask_vector ) ) ;
             any_above  = vget_lane_u8( vpmax_u8( merge_bits, merge_bits ), 0 ) ;
-            img_ptr += 16 ;
         }
-        img_ptr -= 16 ; // be nice to get idx of fist non-zero somehow
+        // Something isn't right here, need to skip back further than the 16 pixels we stride over
+        img_ptr -= 32 ; // be nice to get idx of fist non-zero somehow
 #endif
 #ifndef __TEST_BAD__
         while( *img_ptr < threshold && img_ptr < img_out_ptr ) {
@@ -381,17 +408,17 @@ DetVec_t CircleFit(
 ) {
     // Use Hu-Moments to compute the Centroid of the bright RoI's we have found
 
-	DetVec_t       ret;              // Return vector
-	ret.reserve(regions.size());
+    DetVec_t       ret;              // Return vector
+    ret.reserve(regions.size());
 
-	// image navigation
+    // image navigation
     const uint8_t* img_in = &img[0] ; // ref to 1st Pixel
     uint8_t*       img_ptr ;          // Pixel being processed
 
-	// Image Moments
+    // Image Moments
     float_t        m_00, m_01, m_10 ; // Raw Moments
-	float_t        m_11, m_02, m_20 ; // 2nd Order Moments
-	float_t        u_02, u_20, u_11 ; // Central moments
+    float_t        m_11, m_02, m_20 ; // 2nd Order Moments
+    float_t        u_02, u_20, u_11 ; // Central moments
     float_t        m_00R ;            // Area Reciprical
     float_t        val, pxi, pxj ;    // temps
     float_t        x, y, r, score ;   // Centroid of the RoI
@@ -409,11 +436,10 @@ DetVec_t CircleFit(
         w = region.bb_m - region.bb_x ;
         h = region.bb_n - region.bb_y ;
         
-        // reset vars
-        m_00 = m_01 = m_10 = m_00R = pxi = pxj = val = x = y = r = score = 0.0f ;
-		m_11 = m_02 = m_20 = u_02 = u_20 = u_11 = 0.0f ;
-        L1 = L2 = a = b = c = d = 0.0f ;
-        
+        // reset acumulation vars
+        m_00 = m_01 = m_10 = pxi = pxj = val = 0.0f ;
+        m_11 = m_02 = m_20 = 0.0f ;
+
         // examine region BB some dims could be 1 px
         for( size_t j = region.bb_y; j <= region.bb_n; j++ ) {
             img_ptr = (uint8_t*) img_in + (j * img_w) ;
@@ -425,13 +451,13 @@ DetVec_t CircleFit(
                    pxi = val * i ;
                    pxj = val * j ;
 
-				   // 1st Order
+                   // 1st Order
                    m_00 += val ;
                    m_10 += pxi ;
                    m_01 += pxj ;
-				   m_11 += pxi * j ;
+                   m_11 += pxi * j ;
                    
-				   // 2nd Order
+                   // 2nd Order
                    m_20 += pxi * i ;
                    m_02 += pxj * j ;
                 }
@@ -439,7 +465,12 @@ DetVec_t CircleFit(
             }
         }
 
-		// Compute Centroid --------------------------------------------
+        // Reset Computation Vars
+        m_00R = u_02 = u_20 = u_11 = 0.0f ;
+        L1 = L2 = a = b = c = d = 0.0f ;
+        x = y = r = score = 0.0f ;
+        
+        // Compute Centroid --------------------------------------------
         // compute 1st order moments
         m_00R = (1.0f / m_00) ;
         x = m_10 * m_00R ;
@@ -460,7 +491,7 @@ DetVec_t CircleFit(
         c = 4.0 * (u_11 * u_11) ;
         d = (u_20 - u_02) * (u_20 - u_02) ;
 
-        // Magik
+        // Magik method
         L1 = sqrt( a * (b + sqrt( c + d )) ) ;
         L2 = sqrt( a * (b - sqrt( c + d )) ) ;
         
@@ -470,14 +501,14 @@ DetVec_t CircleFit(
             r = L1 ;
         }
 
-		// Circularity Score -------------------------------------------
+        // Circularity Score -------------------------------------------
         // being clever requies both Eigen Values to be correct
-		score = (float) std::min( w, h ) / (float) std::max( w, h ) ;
+        score = (float) std::min( w, h ) / (float) std::max( w, h ) ;
 
 
-		// fix center (center of a pixel, not in the up-left corner)
-		x += 0.5f ;
-		y += 0.5f ;
+        // fix center (center of a pixel, not in the up-left corner)
+        x += 0.5f ;
+        y += 0.5f ;
 
 
         // Add to return
@@ -495,6 +526,43 @@ DetVec_t CircleFit(
     // Done
     return ret ;
 } // CircleFit
+
+
+Roid8Vec_t PackCentroids8( const DetVec_t &centroids ) { // returns Vector of packed centroids
+    // TODO: Move to a more sensible library
+    Roid8Vec_t ret ;
+    ret.reserve( centroids.size() ) ;
+
+    simpleDet  c ;        // temp centroid
+    float_t    dec, frc ; // temp decimal * modulus
+
+    for( size_t i = 0; i < centroids.size(); i++ ) {
+        packedCentroids8 r ;
+        c = centroids[ i ] ;
+
+        // TODO: Could NEON help here?
+        
+        // X
+        frc = std::modf( c.x, &dec ) ;
+        r.xd = (uint16_t) dec ;
+        r.xf = (uint8_t) (frc * 255) ;
+
+        // Y
+        frc = std::modf( c.y, &dec ) ;
+        r.yd = (uint16_t) dec ;
+        r.yf = (uint8_t) (frc * 255) ;
+
+        // R
+        frc = std::modf( c.r, &dec ) ;
+        r.rd = (uint8_t)   dec ;
+        r.rf = ((uint8_t) (frc * 128)) << 4 ;
+        
+        ret.push_back( r ) ;
+    }
+
+    return ret ;
+} // PackCentroids9
+
 
 } // namespace vision
 #endif

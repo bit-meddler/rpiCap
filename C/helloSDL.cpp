@@ -16,8 +16,8 @@ timespec TimeDelta( timespec start, timespec end ) {
         delta.tv_sec  -= 1 ;
         delta.tv_nsec += 1000000000 ;
     }
-    printf( "start: %lds %ldns\n", start.tv_sec, start.tv_nsec ) ;
-    printf( "  end: %lds %ldns\n",   end.tv_sec,   end.tv_nsec ) ;
+    //printf( "start: %lds %ldns\n", start.tv_sec, start.tv_nsec ) ;
+    //printf( "  end: %lds %ldns\n",   end.tv_sec,   end.tv_nsec ) ;
     return delta ;
 }
 
@@ -118,20 +118,21 @@ int main( int argc, char* args[] ) {
              img_path_fq.c_str(), w, h, row, bpp, num_px
     ) ;
     
-    // data from cc
+    // types used to do mocap
     vision::RoiVec_t   regions ;
     vision::RoiIdSet_t gutters ;
     vision::DetVec_t   detections ;
-
+    vision::Roid8Vec_t roids ;
+    
     // Profile Computer Vision Algos 
     timespec tm_start, tm_end, tm_delta ;   
     
     // Test 1, just the whole image
     uint8_t* image_data = static_cast<uint8_t*>( bmp->pixels ) ;
     size_t   vec_size   = 50 ;
-    uint8_t  threshold  = 167 ;
+    uint8_t  threshold  = 166 ;
 
-	// Profile Connected Components
+	// Profile Connected Components ----------------------------------------------------------------
     clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
 
     regions = vision::ConnectedComponents( image_data, w, h, 0, num_px, threshold, vec_size, gutters ) ;
@@ -139,10 +140,10 @@ int main( int argc, char* args[] ) {
     clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
 
     tm_delta = TimeDelta( tm_start, tm_end ) ;
-    printf( "Computed %d Regions\n", regions.size() ) ;
-    printf( "Time %lds %ld.%03ldms \n", tm_delta.tv_sec, tm_delta.tv_nsec / 1000000, tm_delta.tv_nsec / 1000 ) ; // 1ms = ns / 1e6
+    printf( "Detected % 2d Regions in  ", regions.size() ) ;
+    printf( "%lds %ld.%03ldms \n", tm_delta.tv_sec, tm_delta.tv_nsec / 1000000, tm_delta.tv_nsec / 1000 ) ; // 1ms = ns / 1e6
 
-	// Profile Circle-Fitting
+	// Profile Circle-Fitting ----------------------------------------------------------------------
     clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
 
     detections = vision::CircleFit( image_data, regions, w, threshold ) ;
@@ -150,8 +151,20 @@ int main( int argc, char* args[] ) {
     clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
 
     tm_delta = TimeDelta( tm_start, tm_end ) ;
-    printf( "Copmuted Detections in\n" ) ;
-    printf( "Time %lds %ld.%03ldms \n", tm_delta.tv_sec, tm_delta.tv_nsec / 1000000, tm_delta.tv_nsec / 1000 ) ; // 1ms = ns / 1e6
+    printf( "RoI Centers Computed in  " ) ;
+    printf( "%lds %ld.%03ldms \n", tm_delta.tv_sec, tm_delta.tv_nsec / 1000000, tm_delta.tv_nsec / 1000 ) ; // 1ms = ns / 1e6
+
+	// Profile Roid Packing ------------------------------------------------------------------------
+    clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
+
+    roids = vision::PackCentroids8( detections) ;
+
+    clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
+
+    tm_delta = TimeDelta( tm_start, tm_end ) ;
+    printf( "Packed roids to int type " ) ;
+    printf( "%lds %ld.%03ldms \n", tm_delta.tv_sec, tm_delta.tv_nsec / 1000000, tm_delta.tv_nsec / 1000 ) ; // 1ms = ns / 1e6
+
 
     if( show_img ) {
         // make an SDL Window to show the results
