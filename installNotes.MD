@@ -27,3 +27,6 @@ Because I keep bricking my pi trying to write this stuff.
 9. Setup Genie with:
     - Nicer syntax highlighting
     - The Build/Compile string from "complie_notes.txt"
+10. Get and Build libcamera:
+    - Follow instructions at https://www.raspberrypi.org/documentation/linux/software/libcamera/README.md
+    - Remember `-j 2` switch on the pi3
