@@ -64,22 +64,24 @@ int main( int argc, char* args[] ) {
     // Just your average typical first compiled program
     printf("Testing Computer Vision !\n" ) ;
 
-    bool show_img  = 0 ;
-    bool show_dets = 1 ;
-    bool show_regs = 1 ;
-    bool show_info = 0 ;
-    int  show_time = 5000 ;
+    bool     show_img  = 0 ;
+    bool     show_dets = 1 ;
+    bool     show_regs = 1 ;
+    bool     show_info = 0 ;
+    int      show_time = 5000 ;
+    uint8_t  threshold = 166 ;
     
     for( int i=1; i<argc; ) {
-        printf( "{%d} %s\n", i, args[i] ) ;
         
         if( (std::strcmp( args[i], "--help" ) == 0) ||
             (std::strcmp( args[i], "-h" ) == 0) ) {
+            printf( "'-h' or '--help' Display this message\n" ) ;
             printf( "'-i' Display Info\n" ) ;
             printf( "'-s' Display Image (needs X session)\n" ) ;
             printf( "'-sr' only show the Regions\n" ) ;
-            printf( "'-sd' only show the Centroids\n" ) ;
-            printf( "'-t MILLISECONDS' display image for this long\n" ) ;
+            printf( "'-sc' only show the Centroids\n" ) ;
+            printf( "'-d MILLISECONDS' hold image for this long\n" ) ;
+            printf( "'-t THRESHOLD' set the blob threshold [0..255]\n" ) ;
             printf( "No switches just runs a short test\n" ) ;
         }
         
@@ -94,7 +96,7 @@ int main( int argc, char* args[] ) {
         }
         
         
-        if( std::strcmp( args[i], "-sd" ) == 0 ) {
+        if( std::strcmp( args[i], "-sc" ) == 0 ) {
             show_img  = 1 ;
             show_regs = 0 ;
         }
@@ -103,10 +105,15 @@ int main( int argc, char* args[] ) {
             show_info = 1 ;
         }
         
-        if( std::strcmp( args[i], "-t" ) == 0 ) {
+        if( std::strcmp( args[i], "-d" ) == 0 ) {
             show_img = 1 ;
             i++ ;
             show_time = atoi( args[i] ) ;
+        }
+        
+        if( std::strcmp( args[i], "-t" ) == 0 ) {
+            i++ ;
+            threshold = atoi( args[i] ) ;
         }
         
         i++ ;
@@ -133,8 +140,7 @@ int main( int argc, char* args[] ) {
 
     int num_px = h * row ;
     
-    fprintf( stdout,
-             "Image: '%s'\ndims: (%d x %d), row len:%d, bit-depth: %d, size: %dpx.\n",
+    printf( "Image: '%s'\ndims: (%d x %d), row len:%d, bit-depth: %d, size: %dpx.\n",
              img_path_fq.c_str(), w, h, row, bpp, num_px
     ) ;
     
@@ -150,7 +156,6 @@ int main( int argc, char* args[] ) {
     // Test 1, just the whole image
     uint8_t* image_data = static_cast<uint8_t*>( bmp->pixels ) ;
     size_t   vec_size   = 50 ;
-    uint8_t  threshold  = 166 ;
 
 	// Profile Connected Components ----------------------------------------------------------------
     clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;

@@ -21,16 +21,17 @@
 #ifndef __VISION__
 #define __VISION__
 
-// Testing different skipping methods __DEFAULT_SKIPPING__ / __TEST_NORMAL__ / __TEST_BAD__
-#define __DEFAULT_SKIPPING__
+// Testing different skipping methods __TEST_OPTIMIZED__ / __TEST_NORMAL__ / __TEST_BAD__
+#define __TEST_OPTIMIZED__
 
 #include <cmath>
 #include <vector>
 #include <set>
 #include <map>
 #include <cstring>
+#include <algorithm>
 
-#ifdef __DEFAULT_SKIPPING__
+#ifdef __TEST_OPTIMIZED__
 #include <arm_neon.h>
 #endif
 
@@ -93,10 +94,12 @@ struct scanline {
 
     inline bool touches( scanline &other ) {
         // TODO: Make this a Macro?
-        return (x >= other.x && x <= other.m) || \
+        /*return (x >= other.x && x <= other.m) || \
                (m >= other.x && m <= other.m) || \
                (other.x >= x && other.x <= m) || \
                (other.m >= x && other.m <= m) ;
+        */
+        return (other.x >= x && other.x < m) || (x >= other.x && x < other.m) ;
     }
 } ;
 
@@ -139,13 +142,17 @@ struct simpleROI {
         bb_y = std::min( bb_y, other.bb_y ) ;
         bb_m = std::max( bb_m, other.bb_m ) ;
         bb_n = std::max( bb_n, other.bb_n ) ;
-        sl = other.sl ;
         // take oldest ID
         id = std::min( id, other.id ) ;
     }
 
     inline line_t area() {
         return (bb_m - bb_x) * (bb_n - bb_y) ;
+    }
+    
+    // Comparitor for sorting
+    bool operator < ( const simpleROI &other ) const {
+        return id < other.id ;
     }
 } ;
 
@@ -221,10 +228,13 @@ RoiVec_t ConnectedComponents(
     master_line.reset() ;
     tmp_reg.reset() ;
 
+    // Initally, there can't be a masterline
+    master_line_id = ROI_INVALID ;
+
     while( !ended ) {
         // Skip dark pixels
         
-#ifdef __DEFAULT_SKIPPING__
+#ifdef __TEST_OPTIMIZED__
         // NEON
         uint8x16_t threshold_vector = vdupq_n_u8( threshold ) ;
         uint8x16_t mask_vector ;
@@ -245,9 +255,14 @@ RoiVec_t ConnectedComponents(
             // https://stackoverflow.com/questions/15389539/fastest-way-to-test-a-128-bit-neon-register-for-a-value-of-0-using-intrinsics
             merge_bits = vorr_u8( vget_low_u8( mask_vector ), vget_high_u8( mask_vector ) ) ;
             any_above  = vget_lane_u8( vpmax_u8( merge_bits, merge_bits ), 0 ) ;
+
+            // need a guard against going off the end
+            if( img_ptr >= img_out_ptr ) {
+                break ; // exit the while
+            } 
         }
         // Something isn't right here, need to skip back further than the 16 pixels we stride over
-        img_ptr -= 32 ; // be nice to get idx of fist non-zero somehow
+        img_ptr -= 16 ; // be nice to get idx of fist non-zero somehow
 #endif
 #ifndef __TEST_BAD__
         while( *img_ptr < threshold && img_ptr < img_out_ptr ) {
@@ -279,6 +294,13 @@ RoiVec_t ConnectedComponents(
             tmp_x = img_idx % img_w ;
             row_start = tmp_y * img_w ;
             row_end = ((tmp_y + 1) * img_w) - 1 ;
+            previous_y = tmp_y - 1 ; // y above current
+            
+            // validate the masterline
+            if( master_line.y != previous_y ) {
+                // The new scanline can't touch the masterline
+                master_line_id = ROI_INVALID ;
+            }
         } else {
             // same row as last scanline
             tmp_x = img_idx - row_start ;
@@ -289,13 +311,12 @@ RoiVec_t ConnectedComponents(
 
         // region list housekeeping
         // There must be a bug in here somewhere
-        if( tmp_y > last_y ) {
+        if( tmp_y > last_y ) {            
             // "left slice" have sl_n < last_y so can't join into the new scanline
             // "Right slice" could join this or future scanlines on this y
             reg_scan = reg_start ;
             reg_idx = reg_start ;
             reg_len = region_list.size() ;
-            previous_y = tmp_y - 1 ; // y above current
             while( reg_scan < reg_len ) {
                 if( region_list[reg_scan].sl.y < previous_y ) {
                     // move reg_scan to the left
@@ -327,10 +348,13 @@ RoiVec_t ConnectedComponents(
 
 
         // Set the end of the scanline
-        current_line.m = (img_idx - row_start) - 1;
+        current_line.m = (img_idx - row_start) ;
         //printf("ri %d, rl %d\n", reg_idx, reg_len);
-        if( (reg_idx == reg_len) || // 1st region 
-            (current_line.m < region_list[ reg_idx ].sl.x) // before a potential join
+
+        // Insert new Region, or add Scanline to existing region, or use current_line or master_line
+        // to join regions
+        if( (reg_idx == reg_len) ||                         // 1st region, or end of list 
+            (current_line.m < region_list[ reg_idx ].sl.x)  // ends before a potential join
           ) { 
             // Insert a new RoI
             //printf("New Region, can't touch\n");
@@ -342,6 +366,19 @@ RoiVec_t ConnectedComponents(
             region_list.insert( region_list.begin() + reg_idx, new_reg ) ;
             reg_len = region_list.size() ;
             ++reg_idx ;
+
+            // Could this new region join a masterline?
+            if( (master_line_id != ROI_INVALID) && current_line.touches( master_line ) ) {
+                    // This region underhangs a masterline, map the masterline's id to the region
+                    //printf("Masterline 1 \n");
+                    merge_map.insert(
+                        std::pair< line_t, line_t >(
+                            std::max( master_line_id, new_reg.id ),
+                            std::min( master_line_id, new_reg.id )
+                        )
+                    ) ;
+            }
+            
         } else {
             // check for potential joins
 
@@ -359,15 +396,17 @@ RoiVec_t ConnectedComponents(
                 tmp_reg.reset() ;
                 tmp_reg.takeScanLine( current_line ) ;
                 tmp_reg.update() ;
+                
                 master_line    = region_list[ reg_idx ].sl ;
                 master_line_id = region_list[ reg_idx ].id ;
 
                 region_list[ reg_idx ].merge( tmp_reg ) ;
-
+                region_list[ reg_idx ].takeScanLine( current_line ) ;
+                
                 merge_target = &region_list[ reg_idx ] ;
                 // are there subsequent regions to join?
                 ++reg_idx ;
-                while( reg_idx < reg_len && current_line.touches( region_list[ reg_idx ].sl )  ) {
+                while( (reg_idx < reg_len) && current_line.touches( region_list[ reg_idx ].sl )  ) {
                     // 'merge_target' consumes the subsequent regions
                     merge_target->merge( region_list[ reg_idx ] ) ;
 
@@ -375,6 +414,7 @@ RoiVec_t ConnectedComponents(
                     region_list.erase( region_list.begin() + reg_idx ) ;
                     reg_len = region_list.size() ;
                 }
+                
                 // Take back one khadam to honor the Hebrew God, whose Ark this is
                 reg_idx-- ;
                 
@@ -389,9 +429,11 @@ RoiVec_t ConnectedComponents(
                 region_list.insert( region_list.begin() + reg_idx, new_reg ) ;
                 reg_len = region_list.size() ;
                 ++reg_idx ;
-                if( current_line.touches( master_line ) && current_line.y == (master_line.y + 1) ) {
+
+                // Could this new region join a masterline?
+                if( (master_line_id != ROI_INVALID) && current_line.touches( master_line ) ) {
                     // This region underhangs a masterline, map the masterline's id to the region
-                    //printf("Masterline\n");
+                    //printf("Masterline 2\n");
                     merge_map.insert(
                         std::pair< line_t, line_t >(
                             std::max( master_line_id, new_reg.id ),
@@ -404,17 +446,36 @@ RoiVec_t ConnectedComponents(
         } // if simple merge
     } // while not ended
 
-    // Tidy regions, flag gutters
-    // TODO: How to merge and remove RoIs?
-    for( RoiIdIt_t it = merge_map.begin(); it != merge_map.end(); ++it ) {
-        printf( "region id '%d' needs to merge into id '%d'\n", it->first, it->second ) ;
-    }
+    // Tidy regions, flag gutters ------------------------------------------------------------------
+    
+    // Sort the RoI List on ID, low to high
+    std::sort( region_list.begin(), region_list.end() ) ;
+    
+    // make a map of id -> idx in the sorted Vector, collect gutters
+    std::map< line_t, size_t > RoI_LUT ;
     for( size_t i = 0; i < region_list.size(); i++ ) {
         tmp_reg = region_list[i] ;
+        RoI_LUT.insert( std::pair< line_t, size_t >( tmp_reg.id, i ) ) ;
+        
+        // Gutters not required for "Whole Image" processing, only relevent when splitting image
         if( tmp_reg.bb_y == gut_y || tmp_reg.bb_n == gut_n ) {
             gutterballs.insert( tmp_reg.id ) ;
         }
     }
+    
+    size_t from, into ; // region indexes for merging
+    //std::map< line_t, size_t >::reverse_iterator it ; <- Pukes if not using auto ?!?
+    for( auto rit = merge_map.rbegin(); rit != merge_map.rend(); ++rit ) {
+        // the map is ordered by key, iterate through it backwards
+        from = RoI_LUT[ rit->first ] ;
+        into = RoI_LUT[ rit->second ] ;
+        //printf( "id '%d' (%d) to merge with '%d' (%d)\n", rit->first, from ,rit->second, into ) ;
+        // merge in the region
+        region_list[ into ].merge( region_list[ from ] ) ;
+        // delete the 'from' region, as we are working backwards 'forward' indexs are not corrupted
+        region_list.erase( region_list.begin() + from ) ;
+    }
+    
     return region_list ;
 } // ConnectedComponents
 
