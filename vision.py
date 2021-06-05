@@ -1,3 +1,20 @@
+# 
+# Copyright (C) 2016~2021 The Gimli Project
+# This file is part of rpiCap <https://github.com/bit-meddler/rpiCap>.
+#
+# rpiCap is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# rpiCap is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with rpiCap.  If not, see <http://www.gnu.org/licenses/>.
+#
 """
 computer vision experiments
 
@@ -18,7 +35,7 @@ x,y is the start of a region, m,n is the end:
   |          m,n|
   +-------------+
 
-  so m is a short hand for extend of a row begining at x
+  so m is a short hand for extent of a row begining at x
   and n is the same for a col starting at y
 
 Interesting:
