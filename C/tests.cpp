@@ -51,10 +51,15 @@ void test_cc() {
     vision::RoiVec_t    regions ;
     vision::RoiIdSet_t  gutters ;
 
-    regions = vision::ConnectedComponents( image_data, 12, 12, 0, 144, threshold, 5, gutters ) ;
+    //regions = vision::ConnectedComponentsSlice( image_data, 12, 12, 0, 144, threshold, 5, gutters ) ;
+    
+    regions = vision::ConnectedComponentsImage( image_data, 12, 12, threshold, 5 ) ;
     
     for( size_t i = 0; i < regions.size(); i++ ) {
         R = regions[i] ;
+        if( R.id == vision::ROI_INVALID ){
+            continue ;
+        }
         printf( "{%d} %d: x%d, y%d, m%d, n%d\n", i, R.id, R.bb_x, R.bb_y, R.bb_m, R.bb_n ) ;
     }
 }

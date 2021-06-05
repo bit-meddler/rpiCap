@@ -80,7 +80,7 @@ int main( int argc, char* args[] ) {
             printf( "'-s' Display Image (needs X session)\n" ) ;
             printf( "'-sr' only show the Regions\n" ) ;
             printf( "'-sc' only show the Centroids\n" ) ;
-            printf( "'-d MILLISECONDS' hold image for this long\n" ) ;
+            printf( "'-d MILLISECONDS' delay image for this long\n" ) ;
             printf( "'-t THRESHOLD' set the blob threshold [0..255]\n" ) ;
             printf( "No switches just runs a short test\n" ) ;
         }
@@ -145,7 +145,7 @@ int main( int argc, char* args[] ) {
     ) ;
     
     // types used to do mocap
-    vision::RoiVec_t   regions ;
+    vision::sRoiVec_t  regions ;
     vision::RoiIdSet_t gutters ;
     vision::DetVec_t   detections ;
     vision::Roid8Vec_t roids ;
@@ -158,9 +158,13 @@ int main( int argc, char* args[] ) {
     size_t   vec_size   = 50 ;
 
 	// Profile Connected Components ----------------------------------------------------------------
+
+
+    // O L D   M E T H O D /////////////////////////////////////////////////////////////////////////
+    printf( "Old Method\n" ) ;
     clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
 
-    regions = vision::ConnectedComponents( image_data, w, h, 0, num_px, threshold, vec_size, gutters ) ;
+    regions = vision::ConnectedComponentsSlice( image_data, w, h, 0, num_px, threshold, vec_size, gutters ) ;
 
     clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
 
@@ -177,6 +181,31 @@ int main( int argc, char* args[] ) {
 
     tm_delta = TimeDelta( tm_start, tm_end ) ;
     printf( "RoI Centers Computed in  " ) ;
+    printf( "%lds %ld.%03ldms \n", tm_delta.tv_sec, tm_delta.tv_nsec / 1000000, tm_delta.tv_nsec / 1000 ) ; // 1ms = ns / 1e6
+
+	// Profile Roid Packing ------------------------------------------------------------------------
+    clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
+
+    roids = vision::PackCentroids8( detections) ;
+
+    clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
+
+    tm_delta = TimeDelta( tm_start, tm_end ) ;
+    printf( "Packed roids to int type " ) ;
+    printf( "%lds %ld.%03ldms \n", tm_delta.tv_sec, tm_delta.tv_nsec / 1000000, tm_delta.tv_nsec / 1000 ) ; // 1ms = ns / 1e6
+
+
+    // N E W   M E T H O D /////////////////////////////////////////////////////////////////////////
+    printf( "\n\nNew Method\n" ) ;
+    // Profile Combined Moment collection ----------------------------------------------------------
+    clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
+
+    detections = vision::ConnectedComponentsImage( image_data, w, h, threshold, vec_size ) ;
+
+    clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
+
+    tm_delta = TimeDelta( tm_start, tm_end ) ;
+    printf( "Processed % 2d 'Roids in  ", regions.size() ) ;
     printf( "%lds %ld.%03ldms \n", tm_delta.tv_sec, tm_delta.tv_nsec / 1000000, tm_delta.tv_nsec / 1000 ) ; // 1ms = ns / 1e6
 
 	// Profile Roid Packing ------------------------------------------------------------------------
