@@ -60,16 +60,28 @@ void SDL_DrawFilledCircle( SDL_Renderer *renderer, int x, int y, int r ) {
 } // Draw Circle
 
 
+void timeReport( const char* msg, const timespec &tm ) {
+    float_t millisecs = (float) (tm.tv_nsec / 1000) / 1000.0f ;
+    printf( "%s %lds %7.3fms \n", msg, tm.tv_sec, millisecs ) ;
+}
+
 int main( int argc, char* args[] ) {
-    // Just your average typical first compiled program
+    // Test Harness for Connected Components
     printf("Testing Computer Vision !\n" ) ;
+    
+    // Profile Computer Vision Algos 
+    timespec tm_start, tm_end, tm_delta ;
+        
+    clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
     
     std::string  DEFAULT_IMG = "/code/rpiCap/benchmarkData/testing_000_0000.bmp" ;
     bool         show_img  = 0 ;
     bool         show_dets = 1 ;
     bool         show_regs = 1 ;
     bool         show_info = 0 ;
+    bool         mode_old  = 0 ;
     int          show_time = 5000 ;
+    int          count     = 1 ;   
     uint8_t      threshold = 166 ;
     std::string  img_path_fq = DEFAULT_IMG ;
     
@@ -78,27 +90,31 @@ int main( int argc, char* args[] ) {
         if( (std::strcmp( args[i], "--help" ) == 0) ||
             (std::strcmp( args[i], "-h" ) == 0) ) {
             printf( "'-h' or '--help' Display this message\n" ) ;
+            printf( "'-z' Do old processing mode\n" ) ;
             printf( "'-i' Display Info\n" ) ;
             printf( "'-s' Display Image (needs X session)\n" ) ;
             printf( "'-sr' only show the Regions\n" ) ;
             printf( "'-sc' only show the Centroids\n" ) ;
+            printf( "'-r COUNT' repeat the routine this many times, only last rep is displayed if requested\n" ) ;
             printf( "'-d MILLISECONDS' delay image for this long\n" ) ;
             printf( "'-t THRESHOLD' set the blob threshold [0..255]\n" ) ;
             printf( "'-f FILENAME' process the supplied file (fully Qualified)\n" ) ;
             printf( "No switches just runs a short test\n" ) ;
         }
-        
+
         if( std::strcmp( args[i], "-s" ) == 0 ) {
             show_img = 1 ;
         }
-        
-        
+
+        if( std::strcmp( args[i], "-z" ) == 0 ) {
+            mode_old = 1 ;
+        }
+
         if( std::strcmp( args[i], "-sr" ) == 0 ) {
             show_img  = 1 ;
             show_dets = 0 ;
         }
-        
-        
+
         if( std::strcmp( args[i], "-sc" ) == 0 ) {
             show_img  = 1 ;
             show_regs = 0 ;
@@ -106,6 +122,17 @@ int main( int argc, char* args[] ) {
         
         if( std::strcmp( args[i], "-i" ) == 0 ) {
             show_info = 1 ;
+        }
+        
+        if( std::strcmp( args[i], "-r" ) == 0 ) {
+            i++ ;
+            count = atoi( args[i] ) ;
+            if( count < 1 ) {
+                count = 1 ;
+            }
+            if( count > 100 ) {
+                count = 100 ;
+            }
         }
         
         if( std::strcmp( args[i], "-d" ) == 0 ) {
@@ -126,6 +153,13 @@ int main( int argc, char* args[] ) {
         
         i++ ;
     } // args
+
+    // Report algo in use
+    if( mode_old ) {
+        printf( "Old Method\n" ) ;
+    } else {
+        printf( "New Method\n" ) ;
+    }
 
     // Check the passed filepath exists
     struct stat stat_tmp ;
@@ -169,76 +203,75 @@ int main( int argc, char* args[] ) {
     vision::DetVec_t   detections ;
     vision::Roid8Vec_t roids ;
     
-    // Profile Computer Vision Algos 
-    timespec tm_start, tm_end, tm_delta ;   
-    
     // Test 1, just the whole image
     uint8_t* image_data = static_cast<uint8_t*>( bmp->pixels ) ;
     size_t   vec_size   = 50 ;
-
-	// Profile Connected Components ----------------------------------------------------------------
-
-
-    // O L D   M E T H O D /////////////////////////////////////////////////////////////////////////
-    printf( "Old Method\n" ) ;
-    clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
-
-    regions = vision::ConnectedComponentsSlice( image_data, w, h, 0, num_px, threshold, vec_size, gutters ) ;
-
+    
     clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
 
     tm_delta = TimeDelta( tm_start, tm_end ) ;
-    printf( "Detected % 2d Regions in  ", regions.size() ) ;
-    printf( "%lds %ld.%03ldms \n", tm_delta.tv_sec, tm_delta.tv_nsec / 1000000, tm_delta.tv_nsec / 1000 ) ; // 1ms = ns / 1e6
+    timeReport( "Time to load image & SDL", tm_delta ) ;
+    
+    for( int reps = 0; reps < count; reps++ ) {
+        // Profile Connected Components ----------------------------------------------------------------
+        if( mode_old ) {
+            // O L D   M E T H O D /////////////////////////////////////////////////////////////////////
+            clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
 
-	// Profile Circle-Fitting ----------------------------------------------------------------------
-    clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
+            regions = vision::ConnectedComponentsSlice( image_data, w, h, 0, num_px, threshold, vec_size, gutters ) ;
 
-    detections = vision::CircleFit( image_data, regions, w, threshold ) ;
+            clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
 
-    clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
+            tm_delta = TimeDelta( tm_start, tm_end ) ;
+            printf( "Detected % 2d Regions in ", regions.size() ) ;
+            timeReport( "", tm_delta ) ;
 
-    tm_delta = TimeDelta( tm_start, tm_end ) ;
-    printf( "RoI Centers Computed in  " ) ;
-    printf( "%lds %ld.%03ldms \n", tm_delta.tv_sec, tm_delta.tv_nsec / 1000000, tm_delta.tv_nsec / 1000 ) ; // 1ms = ns / 1e6
+            // Profile Circle-Fitting ------------------------------------------------------------------
+            clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
 
-	// Profile Roid Packing ------------------------------------------------------------------------
-    clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
+            detections = vision::CircleFit( image_data, regions, w, threshold ) ;
 
-    roids = vision::PackCentroids8( detections) ;
+            clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
 
-    clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
+            tm_delta = TimeDelta( tm_start, tm_end ) ;
+            timeReport( "RoI Centers Computed in ", tm_delta ) ;
 
-    tm_delta = TimeDelta( tm_start, tm_end ) ;
-    printf( "Packed roids to int type " ) ;
-    printf( "%lds %ld.%03ldms \n", tm_delta.tv_sec, tm_delta.tv_nsec / 1000000, tm_delta.tv_nsec / 1000 ) ; // 1ms = ns / 1e6
+            // Profile Roid Packing --------------------------------------------------------------------
+            clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
 
+            roids = vision::PackCentroids8( detections) ;
 
-    // N E W   M E T H O D /////////////////////////////////////////////////////////////////////////
-    printf( "\n\nNew Method\n" ) ;
-    // Profile Combined Moment collection ----------------------------------------------------------
-    clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
+            clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
 
-    detections = vision::ConnectedComponentsImage( image_data, w, h, threshold, vec_size ) ;
+            tm_delta = TimeDelta( tm_start, tm_end ) ;
+            timeReport( "Packed roids to int type", tm_delta ) ;
 
-    clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
+        } else {
+            // N E W   M E T H O D /////////////////////////////////////////////////////////////////////
+            // Profile Combined Moment collection ------------------------------------------------------
+            clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
 
-    tm_delta = TimeDelta( tm_start, tm_end ) ;
-    printf( "Processed % 2d 'Roids in  ", regions.size() ) ;
-    printf( "%lds %ld.%03ldms \n", tm_delta.tv_sec, tm_delta.tv_nsec / 1000000, tm_delta.tv_nsec / 1000 ) ; // 1ms = ns / 1e6
+            detections = vision::ConnectedComponentsImage( image_data, w, h, threshold, vec_size ) ;
 
-	// Profile Roid Packing ------------------------------------------------------------------------
-    clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
+            clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
 
-    roids = vision::PackCentroids8( detections) ;
+            tm_delta = TimeDelta( tm_start, tm_end ) ;
+            printf( "Processed % 2d 'Roids in ", detections.size() ) ;
+            timeReport( "", tm_delta ) ;
 
-    clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
+            // Profile Roid Packing --------------------------------------------------------------------
+            clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
 
-    tm_delta = TimeDelta( tm_start, tm_end ) ;
-    printf( "Packed roids to int type " ) ;
-    printf( "%lds %ld.%03ldms \n", tm_delta.tv_sec, tm_delta.tv_nsec / 1000000, tm_delta.tv_nsec / 1000 ) ; // 1ms = ns / 1e6
+            roids = vision::PackCentroids8( detections) ;
 
+            clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
 
+            tm_delta = TimeDelta( tm_start, tm_end ) ;
+            timeReport( "Packed roids to int type", tm_delta ) ;
+        } // Old / New method
+        
+    } // repeat
+    
     if( show_img ) {
         // make an SDL Window to show the results
         SDL_Window* win = SDL_CreateWindow(
@@ -277,7 +310,7 @@ int main( int argc, char* args[] ) {
         if( show_dets ) {
             SDL_SetRenderDrawColor( renderer, 0, 255, 0, 48 ) ;
             vision::simpleDet D ;
-            for( size_t i = 0; i < regions.size(); i++ ) {
+            for( size_t i = 0; i < detections.size(); i++ ) {
                 D = detections[i] ;
                 SDL_DrawFilledCircle( renderer, (int)D.x, (int)D.y, (int)D.r ) ;
             }
@@ -292,18 +325,20 @@ int main( int argc, char* args[] ) {
         SDL_DestroyWindow( win ) ;
         SDL_DestroyTexture( tex ) ;
         
-    }
+    } // show IMG
     
     if( show_info ) {
         vision::simpleROI R ;
-        vision::simpleDet D ;
         for( size_t i = 0; i < regions.size(); i++ ) {
             R = regions[i] ;
-            D = detections[i] ;
-            printf( "{%d} %d: x%d, y%d, m%d, n%d\n", i, R.id, R.bb_x, R.bb_y, R.bb_m, R.bb_n ) ;
-            printf( "{%d} centroid %4f, %4f, %4f\n", i, D.x, D.y, D.r ) ;
+            printf( "[%2d] %2d: x%3d, y%3d, m%3d, n%3d\n", i, R.id, R.bb_x, R.bb_y, R.bb_m, R.bb_n ) ;
         }
-    }
+        vision::simpleDet D ;
+        for( size_t i = 0; i < detections.size(); i++ ) {
+            D = detections[i] ;
+            printf( "[%2d] centroid X: %7.3f, Y: %7.3f, R: %5.3f\n", i, D.x, D.y, D.r ) ;
+        }
+    } // report info
     
     SDL_FreeSurface( bmp ) ;
     SDL_Quit() ;

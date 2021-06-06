@@ -108,7 +108,12 @@ struct moment {
     float_t       m_02, m_20 ;       // 2nd Order Moments
     
     inline void reset() {
-        m_00 = m_01 = m_10 = m_11 = m_02 = m_20 = 0.0f ;
+        m_00 = 0.0f ;
+        m_01 = 0.0f ;
+        m_10 = 0.0f ;
+        m_11 = 0.0f ;
+        m_02 = 0.0f ;
+        m_20 = 0.0f ;
     }
 
     inline void merge( moment &other ) {
@@ -188,15 +193,14 @@ struct ROI {
     line_t id ;
     // Last hot line 3
     scanline sl ;
-    // Image Moments
+    // Image Moments 6
     moment hu ;
 
     inline void reset() {
         bb_x = bb_y = ROI_BIG_NUM ; 
         bb_m = bb_n = 0 ;
-        sl.x = sl.m = sl.n = 0 ;
+        //sl.x = sl.m = sl.n = 0 ;
         id = ROI_NO_ID ;
-        hu.reset() ;
     }
 
     inline void update() {
@@ -608,7 +612,7 @@ DetVec_t ConnectedComponentsImage(
 
     // Image Moments
     moment      current_moment ;     // temp image moment
-    float_t     val, pxi, pxj ;      // temps
+    float_t     val, pix, piy ;      // temps
     
     // Region joining
     scanline    master_line ;        // master region scanline - for joining
@@ -690,9 +694,6 @@ DetVec_t ConnectedComponentsImage(
 
         //printf("hot px found at idx:%d (x%d, y%d).\n", img_idx, img_idx % img_w, img_idx / img_w);
 
-        // scan this line
-        current_line.reset() ;
-
         // scanline housekeeping
         if( img_idx > row_end ) {
             // we're on a new row
@@ -711,7 +712,9 @@ DetVec_t ConnectedComponentsImage(
             // same row as last scanline
             tmp_x = img_idx - row_start ;
         }
-
+        
+        // scan this line
+        current_line.reset() ;
         current_line.x = tmp_x ;
         current_line.y = tmp_y ;
 
@@ -741,18 +744,19 @@ DetVec_t ConnectedComponentsImage(
         while( row_end >= img_idx && *img_ptr >= threshold ) {
             // get intensity & x & y factors
             val = (float) (*img_ptr - threshold) ;
-            pxi = val * tmp_x ;
-            pxj = val * tmp_y ;
+            pix = val * tmp_x ; // Pixel Intensity X
+            piy = val * tmp_y ; // Pixel Intensity Y
 
             // 1st Order
             current_moment.m_00 += val ;
-            current_moment.m_10 += pxi ;
-            current_moment.m_01 += pxj ;
-            current_moment.m_11 += pxi * tmp_y ;
+            current_moment.m_10 += pix ;
+            current_moment.m_01 += piy ;
+            current_moment.m_11 += pix *  tmp_y ;
 
             // 2nd Order
-            current_moment.m_20 += pxi * tmp_x ;
-            current_moment.m_02 += pxj * tmp_y ;
+            current_moment.m_20 += pix * tmp_x ;
+            current_moment.m_02 += piy * tmp_y ;
+            
             // inc
             ++tmp_x ;
             ++img_idx ;
@@ -778,7 +782,7 @@ DetVec_t ConnectedComponentsImage(
             new_reg.reset() ;
             new_reg.id = reg_id++ ;
             new_reg.takeScanLine( current_line ) ;
-            new_reg.addMoment( current_moment ) ;
+            new_reg.hu = current_moment ;
             new_reg.update() ;
             region_list.insert( region_list.begin() + reg_idx, new_reg ) ;
             reg_len = region_list.size() ;
@@ -803,16 +807,15 @@ DetVec_t ConnectedComponentsImage(
             while( reg_idx < reg_len && region_list[ reg_idx ].sl.m < current_line.x ) {
                 ++reg_idx;
             }
-            // x-m   x----m   xm
-            // 132456789123456789
-            //  x-----m x--m x--m
 
             if( current_line.touches( region_list[ reg_idx ].sl ) ) {
                 //printf("Touching region %d\n", reg_idx);
                 // touching regions
                 tmp_reg.reset() ;
+                //tmp_reg.hu.reset() ;
                 tmp_reg.takeScanLine( current_line ) ;
-                tmp_reg.addMoment( current_moment ) ;
+                //tmp_reg.addMoment( current_moment ) ;
+                tmp_reg.hu = current_moment ;
                 tmp_reg.update() ;
                 
                 master_line    = region_list[ reg_idx ].sl ;
@@ -822,6 +825,7 @@ DetVec_t ConnectedComponentsImage(
                 region_list[ reg_idx ].takeScanLine( current_line ) ;
                 
                 merge_target = &region_list[ reg_idx ] ;
+                
                 // are there subsequent regions to join?
                 ++reg_idx ;
                 while( (reg_idx < reg_len) && current_line.touches( region_list[ reg_idx ].sl )  ) {
@@ -843,7 +847,7 @@ DetVec_t ConnectedComponentsImage(
                 new_reg.reset() ;
                 new_reg.id = reg_id++ ;
                 new_reg.takeScanLine( current_line ) ;
-                new_reg.addMoment( current_moment ) ;
+                new_reg.hu = current_moment ;
                 new_reg.update() ;
                 region_list.insert( region_list.begin() + reg_idx, new_reg ) ;
                 reg_len = region_list.size() ;
