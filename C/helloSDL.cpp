@@ -20,7 +20,7 @@
 
 #include <stdio.h>
 #include <string>
-//#include "time.h"
+#include <sys/stat.h>
 #include "SDL2/SDL.h"
 #include "vision.cpp"
 
@@ -63,13 +63,15 @@ void SDL_DrawFilledCircle( SDL_Renderer *renderer, int x, int y, int r ) {
 int main( int argc, char* args[] ) {
     // Just your average typical first compiled program
     printf("Testing Computer Vision !\n" ) ;
-
-    bool     show_img  = 0 ;
-    bool     show_dets = 1 ;
-    bool     show_regs = 1 ;
-    bool     show_info = 0 ;
-    int      show_time = 5000 ;
-    uint8_t  threshold = 166 ;
+    
+    std::string  DEFAULT_IMG = "/code/rpiCap/benchmarkData/testing_000_0000.bmp" ;
+    bool         show_img  = 0 ;
+    bool         show_dets = 1 ;
+    bool         show_regs = 1 ;
+    bool         show_info = 0 ;
+    int          show_time = 5000 ;
+    uint8_t      threshold = 166 ;
+    std::string  img_path_fq = DEFAULT_IMG ;
     
     for( int i=1; i<argc; ) {
         
@@ -82,6 +84,7 @@ int main( int argc, char* args[] ) {
             printf( "'-sc' only show the Centroids\n" ) ;
             printf( "'-d MILLISECONDS' delay image for this long\n" ) ;
             printf( "'-t THRESHOLD' set the blob threshold [0..255]\n" ) ;
+            printf( "'-f FILENAME' process the supplied file (fully Qualified)\n" ) ;
             printf( "No switches just runs a short test\n" ) ;
         }
         
@@ -116,8 +119,23 @@ int main( int argc, char* args[] ) {
             threshold = atoi( args[i] ) ;
         }
         
+        if( std::strcmp( args[i], "-f" ) == 0 ) {
+            i++ ;
+            img_path_fq = args[i] ;
+        }
+        
         i++ ;
     } // args
+
+    // Check the passed filepath exists
+    struct stat stat_tmp ;
+    if( stat( img_path_fq.c_str(), &stat_tmp ) != 0 ) {
+        // no file
+        fprintf( stderr, "ERROR: can't find '%s'", img_path_fq.c_str() ) ;
+        img_path_fq = DEFAULT_IMG ;
+    } else {
+        // cast to string ?
+    }
     
     // init SDL
     if( SDL_Init( SDL_INIT_VIDEO ) < 0 ) {
@@ -125,7 +143,6 @@ int main( int argc, char* args[] ) {
         return -1 ;
     }
     
-    std::string img_path_fq = "/code/rpiCap/benchmarkData/testing_000_0000.bmp" ;
     SDL_Surface *bmp = SDL_LoadBMP( img_path_fq.c_str() ) ;
     if( bmp == nullptr ) {
         fprintf( stderr, "ERROR, SDL_LoadBMP() - '%s'.\n", SDL_GetError() ) ;
@@ -140,9 +157,11 @@ int main( int argc, char* args[] ) {
 
     int num_px = h * row ;
     
-    printf( "Image: '%s'\ndims: (%d x %d), row len:%d, bit-depth: %d, size: %dpx.\n",
-             img_path_fq.c_str(), w, h, row, bpp, num_px
-    ) ;
+    if( show_info ) {
+        printf( "Image: '%s'\ndims: (%d x %d), row len:%d, bit-depth: %d, size: %dpx.\n",
+                img_path_fq.c_str(), w, h, row, bpp, num_px
+        ) ;
+    }
     
     // types used to do mocap
     vision::sRoiVec_t  regions ;
