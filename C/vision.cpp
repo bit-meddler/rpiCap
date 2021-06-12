@@ -590,6 +590,7 @@ DetVec_t ConnectedComponentsImage(
     int         img_idx   = 0 ;      // index into img (remember it's flat)
     int         row_start = 0 ;      // index of current row start
     int         row_end   = 0 ;      // index of current row end
+    //int         last_idx  = 0 ;      // last hot index (Debug)
     line_t      tmp_x     = 0 ;      // temp x,y of a bright pixel
     line_t      tmp_y     = 0 ;      // Shuttup compiler, I know it will get initialized
     line_t      last_y    = 0 ;      // last y we encountered
@@ -611,6 +612,7 @@ DetVec_t ConnectedComponentsImage(
     scanline    current_line ;       // temp scanline
 
     // Image Moments
+    line_t      tmp_ysq = 0 ;        // y Squared, used in 2nd order moments
     moment      current_moment ;     // temp image moment
     float_t     val, pix, piy ;      // temps
     
@@ -651,13 +653,23 @@ DetVec_t ConnectedComponentsImage(
         uint8x16_t img_slice   ;
         uint8x8_t  merge_bits  ;
         uint8_t    any_above = 0 ;
+
+        // Align to 16-Byte strides
+        uint8_t* img_align_ptr = img_ptr + ((img_out_ptr - img_ptr) % 16) ;
+        while( img_ptr < img_align_ptr ) {
+            if( *img_ptr >= threshold ) { // we got one!
+                any_above = 1 ; // don't do SIMD Skipping
+                img_ptr += 16 ; // this gets taken back
+                break ;
+            }
+            ++img_ptr ;
+        }
         
+        // skip 16-Byte strides
         while( !any_above ) {
             // load Img slice
             img_slice = vld1q_u8( img_ptr ) ;
             img_ptr += 16 ;
-            
-            //memcpy( &img_slice, img_ptr, 16 ) ; // this can't be fast :(
             
             // test for greatness - this should optimize into NEON, right?
             mask_vector = img_slice >= threshold_vector ;
@@ -666,13 +678,16 @@ DetVec_t ConnectedComponentsImage(
             merge_bits = vorr_u8( vget_low_u8( mask_vector ), vget_high_u8( mask_vector ) ) ;
             any_above  = vget_lane_u8( vpmax_u8( merge_bits, merge_bits ), 0 ) ;
 
-            // need a guard against going off the end
+            // have we go to the end of the image?
             if( img_ptr >= img_out_ptr ) {
                 break ; // exit the while
             } 
         }
-        // Something isn't right here, need to skip back further than the 16 pixels we stride over
-        img_ptr -= 16 ; // be nice to get idx of fist non-zero somehow
+        
+        if( any_above ) {
+            // Wind back to scan for hot px
+            img_ptr -= 20 ;
+        }
 #endif
 #ifndef __TEST_BAD__
         while( *img_ptr < threshold && img_ptr < img_out_ptr ) {
@@ -692,8 +707,6 @@ DetVec_t ConnectedComponentsImage(
         // Bright px
         img_idx = img_ptr - img_in_ptr ;
 
-        //printf("hot px found at idx:%d (x%d, y%d).\n", img_idx, img_idx % img_w, img_idx / img_w);
-
         // scanline housekeeping
         if( img_idx > row_end ) {
             // we're on a new row
@@ -702,6 +715,7 @@ DetVec_t ConnectedComponentsImage(
             row_start = tmp_y * img_w ;
             row_end = ((tmp_y + 1) * img_w) - 1 ;
             previous_y = tmp_y - 1 ; // y above current
+            tmp_ysq = tmp_y * tmp_y ;
             
             // validate the masterline
             if( master_line.y != previous_y ) {
@@ -712,6 +726,11 @@ DetVec_t ConnectedComponentsImage(
             // same row as last scanline
             tmp_x = img_idx - row_start ;
         }
+
+        //if( img_idx < last_idx ) {
+            //printf( "Bad IDX! - px found at idx:%d (x%d, y%d).\n", img_idx, tmp_x, tmp_y ) ;
+        //}
+        //last_idx = img_idx ;
         
         // scan this line
         current_line.reset() ;
@@ -719,7 +738,6 @@ DetVec_t ConnectedComponentsImage(
         current_line.y = tmp_y ;
 
         // region list housekeeping
-        // There must be a bug in here somewhere
         if( tmp_y > last_y ) {            
             // "left slice" have sl_n < last_y so can't join into the new scanline
             // "Right slice" could join this or future scanlines on this y
@@ -755,7 +773,7 @@ DetVec_t ConnectedComponentsImage(
 
             // 2nd Order
             current_moment.m_20 += pix * tmp_x ;
-            current_moment.m_02 += piy * tmp_y ;
+            current_moment.m_02 += val * tmp_ysq ;
             
             // inc
             ++tmp_x ;
@@ -773,6 +791,7 @@ DetVec_t ConnectedComponentsImage(
 
         // Insert new Region, or add Scanline to existing region, or use current_line or master_line
         // to join regions
+        // TODO: something wrong here, but I can't figure it out
         if( (reg_idx == reg_len) ||                         // 1st region, or end of list 
             (current_line.m < region_list[ reg_idx ].sl.x)  // ends before a potential join
           ) { 
@@ -874,8 +893,7 @@ DetVec_t ConnectedComponentsImage(
     // make a map of id -> idx in the region_list
     std::map< line_t, size_t > RoI_LUT ;
     for( size_t i = 0; i < region_list.size(); i++ ) {
-        tmp_reg = region_list[i] ;
-        RoI_LUT.insert( std::pair< line_t, size_t >( tmp_reg.id, i ) ) ;
+        RoI_LUT.insert( std::pair< line_t, size_t >( region_list[ i ].id, i ) ) ;
     }
     
     size_t from, into ; // region indexes for merging
@@ -926,7 +944,7 @@ DetVec_t ConnectedComponentsImage(
 
         // Compute radius ----------------------------------------------
         // Implementing equations from ImageMagik Script 'moments'
-        // Cos all the scientific methods give bogus results!
+        // 'Cos all the scientific methods give bogus results!
 
         // Compute Central moments
         u_11 = tmp_reg.hu.m_11 - (x * tmp_reg.hu.m_01) ;
@@ -939,14 +957,13 @@ DetVec_t ConnectedComponentsImage(
         c = 4.0 * (u_11 * u_11) ;
         d = (u_20 - u_02) * (u_20 - u_02) ;
 
-        // Magik method
         L1 = sqrt( a * (b + sqrt( c + d )) ) ;
-        L2 = sqrt( a * (b - sqrt( c + d )) ) ;
-        
-        r = ((float) w + h) / 4.0f ; // Backup guess
+        //L2 = sqrt( a * (b - sqrt( c + d )) ) ; // minor axis is always off by a massive amount
 
         if( L1 > 0.0f ) {
             r = L1 ;
+        } else {
+            r = ((float) w + h) / 4.0f ; // Backup guess
         }
 
         // Circularity Score -------------------------------------------

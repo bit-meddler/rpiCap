@@ -3,3 +3,6 @@ g++ -Wall -o "%e" "%f" -Wno-unused-variable `sdl-config --cflags --libs` -lSDL2 
 
 # compiling lib to shared object
 g++ -fPIC -shared vision.cpp -o vision.so
+
+# Optimization flags ON
+g++ -O3 -Wall -o "%e" "%f" `sdl-config --cflags --libs` -lSDL2 -mfpu=neon -mtune=cortex-a53 -funsafe-math-optimizations -march=armv8-a+crc+simd

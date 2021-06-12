@@ -67,10 +67,11 @@ void timeReport( const char* msg, const timespec &tm ) {
 
 int main( int argc, char* args[] ) {
     // Test Harness for Connected Components
-    printf("Testing Computer Vision !\n" ) ;
+    printf("Testing Centroid Detection\n" ) ;
     
     // Profile Computer Vision Algos 
     timespec tm_start, tm_end, tm_delta ;
+    long cum_time = 0 ; // cumulative processing time
         
     clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
     
@@ -95,11 +96,12 @@ int main( int argc, char* args[] ) {
             printf( "'-s' Display Image (needs X session)\n" ) ;
             printf( "'-sr' only show the Regions\n" ) ;
             printf( "'-sc' only show the Centroids\n" ) ;
-            printf( "'-r COUNT' repeat the routine this many times, only last rep is displayed if requested\n" ) ;
+            printf( "'-r COUNT' repeat the routine COUNT times\n" ) ;
             printf( "'-d MILLISECONDS' delay image for this long\n" ) ;
             printf( "'-t THRESHOLD' set the blob threshold [0..255]\n" ) ;
             printf( "'-f FILENAME' process the supplied file (fully Qualified)\n" ) ;
             printf( "No switches just runs a short test\n" ) ;
+            return 0 ;
         }
 
         if( std::strcmp( args[i], "-s" ) == 0 ) {
@@ -130,8 +132,8 @@ int main( int argc, char* args[] ) {
             if( count < 1 ) {
                 count = 1 ;
             }
-            if( count > 100 ) {
-                count = 100 ;
+            if( count > 500000 ) {
+                count = 500000 ;
             }
         }
         
@@ -212,6 +214,8 @@ int main( int argc, char* args[] ) {
     tm_delta = TimeDelta( tm_start, tm_end ) ;
     timeReport( "Time to load image & SDL", tm_delta ) ;
     
+    printf( "Threashold %d\n", threshold ) ;
+    
     for( int reps = 0; reps < count; reps++ ) {
         // Profile Connected Components ----------------------------------------------------------------
         if( mode_old ) {
@@ -256,9 +260,13 @@ int main( int argc, char* args[] ) {
             clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
 
             tm_delta = TimeDelta( tm_start, tm_end ) ;
-            printf( "Processed % 2d 'Roids in ", detections.size() ) ;
-            timeReport( "", tm_delta ) ;
-
+            
+            if( count == 1 ) {
+                printf( "Processed % 2d 'Roids in ", detections.size() ) ;
+                timeReport( "", tm_delta ) ;
+            } else {
+                cum_time += tm_delta.tv_nsec / 1000 ;
+            }
             // Profile Roid Packing --------------------------------------------------------------------
             clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_start ) ;
 
@@ -267,7 +275,12 @@ int main( int argc, char* args[] ) {
             clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &tm_end ) ;
 
             tm_delta = TimeDelta( tm_start, tm_end ) ;
-            timeReport( "Packed roids to int type", tm_delta ) ;
+            
+            if( count == 1 ) {
+                timeReport( "Packed roids to int type", tm_delta ) ;
+            } else {
+                cum_time += tm_delta.tv_nsec / 1000 ;
+            }
         } // Old / New method
         
     } // repeat
@@ -312,7 +325,17 @@ int main( int argc, char* args[] ) {
             vision::simpleDet D ;
             for( size_t i = 0; i < detections.size(); i++ ) {
                 D = detections[i] ;
-                SDL_DrawFilledCircle( renderer, (int)D.x, (int)D.y, (int)D.r ) ;
+                
+                if( D.r < 0.5 ) {
+                    // 1 px regions, indicative of an error
+                    SDL_SetRenderDrawColor( renderer, 0, 0, 255, 48 ) ;
+                    SDL_DrawFilledCircle( renderer, (int)D.x, (int)D.y, 1 ) ;
+                    
+                } else {
+                    SDL_SetRenderDrawColor( renderer, 0, 255, 0, 48 ) ;
+                    SDL_DrawFilledCircle( renderer, (int)D.x, (int)D.y, (int)D.r ) ;
+                    
+                }
             }
         }
         
@@ -339,6 +362,13 @@ int main( int argc, char* args[] ) {
             printf( "[%2d] centroid X: %7.3f, Y: %7.3f, R: %5.3f\n", i, D.x, D.y, D.r ) ;
         }
     } // report info
+
+    if( count > 1 ) {
+        float_t total_tm, avg_tm ;
+        total_tm = (float) cum_time / 1000.0f ;
+        avg_tm = total_tm / count ;
+        printf( "%d Iterations\nTotal processing time: %8.3fms\nAvg.  processing time: %8.3fms\n", count, total_tm, avg_tm ) ;
+    }
     
     SDL_FreeSurface( bmp ) ;
     SDL_Quit() ;
