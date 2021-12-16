@@ -28,20 +28,43 @@
 #include <string>
 #include <cstring> // memset
 
+// Containers
+#include <queue>
+
 // libs
 #include "camConsts.hpp"
+#include "camUtils.hpp"
+
 
 // Globals
-CamConsts::camRegs registers{ 0 } ; // camera control registers
-uint32_t roll_cnt = 0 ; // rolling counter
-uint32_t packet_cnt = 0 ; // packet counter
-const int cam_id = 1 ;
+CamConsts::CamRegs registers{ 0 } ; // camera control registers
+CamConsts::PacketData packetData ; // Packetization aids
+CamConsts::Timecode timecode{0} ; // Global clock (This will probably change)
+const int CAM_ID = 1 ; // should be derived from IP
 
-void bail( const std::string msg ) {
-    std::cerr << msg << std::endl ;
-    exit( 1 ) ;
+int sock_rx_fd = -1 ; // CnC socket (receve)
+struct sockaddr_in sock_addr {0} ; // The "Server" to which all cameras send 'roids and other goodies
+socklen_t SA_SIZE = sizeof( sock_addr ) ; // Frequently used
+
+std::priority_queue< CamConsts::QPacket > transmit_queue ; // Packet queue
+
+// get the expected header size, based on packet data type
+inline size_t getHeadSize( const char dtype ){
+    return (dtype==CamConsts::PACKET_IMAGE) ? 24 : 16 ;
 }
 
+// A big enough error to abort the program
+void bail( const std::string msg ) {
+    std::cerr << msg << std::endl ;
+    exit( EXIT_FAILURE ) ;
+}
+
+// An errror, but just one to report / log
+void fail( const std::string msg ) {
+    std::cerr << msg << std::endl ;
+}
+
+// initalize the registers to 0 then apply defaults
 void initalizeRegs( void ) {
     // sys defaults
     registers.fps       =  19 ;
@@ -65,75 +88,121 @@ void initalizeRegs( void ) {
     registers.impactvalz  = 666 ;
 }
 
-int setupSocket( void ) {
-    
-    struct sockaddr_in sock_addr ;
-    memset( (char *) &sock_addr, 0, sizeof( sock_addr ) ) ;
+// setup the UDP Socket for CnC
+void setupSockets( void ) {
 
-    int sock ;
-	if( (sock=socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP )) == -1 ) {
-    		bail( "Socket Creation" ) ;
+    //memset( (char *) &sock_addr, 0, sizeof( sock_addr ) ) ;
+
+    if( sock_rx_fd > 0 ) {
+        // already bound?
+        fail("The RX Socket seems to be already bound, closing and rebinding" ) ;
+        close( sock_rx_fd ) ;
+    }
+
+    // Receving Socket
+	if( (sock_rx_fd=socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP )) == -1 ) {
+        bail( "Failed to Create RX Socket" ) ;
 	}
 
 	sock_addr.sin_family = AF_INET ;
 	sock_addr.sin_port = htons( CamConsts::UDP_PORT_TX ) ;
 	sock_addr.sin_addr.s_addr = htonl( INADDR_ANY ) ;
 
-	if( bind( sock, (struct sockaddr*) &sock_addr, sizeof( sock_addr ) ) == -1) {
-		bail("bind");
+	if( bind( sock_rx_fd, (struct sockaddr*) &sock_addr, SA_SIZE ) == -1) {
+		bail( "Error Binding RX SOcket" ) ;
 	}
 
-    return sock ;
+    // Setup Target Address (Allways send to fixed ip:port)
+	sock_addr.sin_family = AF_INET ;
+	sock_addr.sin_port = htons( CamConsts::UDP_PORT_RX ) ;
+	sock_addr.sin_addr.s_addr = inet_addr( CamConsts::SERVER_IP.c_str() ) ;
+
 }
 
-// packetize
+// form a packet header
+void composeHeader( uint8_t* data,        // buffer to write headder into
+                      size_t  num_dts,      // Number of Centroids
+                      uint8_t compression,  // Centroids Format
+                      char    packet_type,  // Packet Type
+                      size_t  frag_num,     // Fragment number
+                      size_t  frag_count,   // Fragment Count
+                      CamConsts::Timecode tc, // current time
+                      size_t img_os=0,      // image offset
+                      size_t img_sz=0  ){   // image total size
+
+    CamConsts::Header header ; // should be initalized as 0
+
+    // Encode Rolling Packet count
+    uint16_t short_tmp = (((packetData.packet_cnt & 0x1F80) << 1) | 0x8000) | (packetData.packet_cnt & 0x007F) ;
+    header.packet_count = __bswap_16( short_tmp ) ;
+    short_tmp = 0 ;
+
+    // Encode centroid count and format
+    short_tmp = (((num_dts & 0x0380) << 1) | 0x4000) | (num_dts & 0x007F) | ((compression & 0x0007) << 11) ;
+    header.centroid_count = __bswap_16( short_tmp ) ;
+
+    // Chose correct header size
+    size_t size = getHeadSize( packet_type ) ;
+
+    // Compose the header
+    header.flag = 0 ;
+    header.dtype = packet_type ;
+    header.roll_count = packetData.roll_cnt ;
+    header.size = size ;
+    header.tc_h = tc.h ;    
+    header.tc_m = tc.m ;
+    header.tc_s = tc.s ;
+    header.tc_f = tc.f ;
+    header.frag_num   = frag_num ;
+    header.frag_count = frag_count ;
+    // Just zeros if unset
+    header.img_os = img_os ; 
+    header.img_sz = img_sz ; 
+
+    // copy header into the buffer
+    memcpy( data, &header, size ) ;
+}
+
+void packetizeNoneImg( size_t roid_count, char packet_type, size_t frag_num, size_t frag_count, uint8_t* data, size_t data_sz, CamConsts::Timecode tc ) {
+    size_t buffer_required = 16 + data_sz ;
+    uint8_t* dat = new uint8_t[ buffer_required ]{0} ;
+    composeHeader( dat, roid_count, 0x04, packet_type, frag_num, frag_count, tc ) ;
+    memcpy( dat+16, data, data_sz ) ;
+    int priority = (packet_type==CamConsts::PACKET_ROIDS) ? CamConsts::PRI_IMMEDIATE : CamConsts::PRI_NORMAL ;
+    priority += frag_num ;
+    
+    // Enqueue
+    CamConsts::QPacket* dgm = new CamConsts::QPacket( priority, buffer_required, dat ) ;
+    transmit_queue.push( *dgm ) ;
+    packetData.inc() ;
+}
 
 // send packets
+void sendDatagram( uint8_t* data, size_t size ) {
+    int sent = sendto( sock_rx_fd, data, size, 0, (struct sockaddr*) &sock_addr, SA_SIZE ) ;
+        if( sent != (int) size ) {
+            fail( "failed to send packet" ) ;
+        }
+}
 
+// 
 void retort( const std::string msg ) {
     // will be packetized and emitted later...
     char buff[100] ;
-    snprintf( buff, sizeof(buff), "*** CAMERA %d %s ***", cam_id, msg.c_str() ) ;
-    std::string payload = buff ;
-    printf( payload.c_str() ) ;
+    snprintf( buff, sizeof(buff), "*** CAMERA %d %s ***", CAM_ID, msg.c_str() ) ;
+    packetizeNoneImg( 0, CamConsts::PACKET_TEXT, 1, 1, (uint8_t*)buff, strlen( buff ), timecode ) ;
 }
 
 void retortReg( const int reg, const int val ) {
     // will be packetized and emitted later...
     char buff[100] ;
-    snprintf( buff, sizeof(buff), "*** CAMERA %d setting register %d to %d ***", cam_id, reg, val ) ;
-    std::string payload = buff ;
-    printf( payload.c_str() ) ;
+    snprintf( buff, sizeof(buff), "*** CAMERA %d setting register %d to %d ***", CAM_ID, reg, val ) ;
+    packetizeNoneImg( 0, CamConsts::PACKET_TEXT, 1, 1, (uint8_t*)buff, strlen( buff ), timecode ) ;
 }
 
-void recvLoop( const int sock_fd ) {
-    // Get ready to recv
-
-    char in_buf[ CamConsts::RECV_BUFF_SZ ] ;
-    memset( (char *) &in_buf, 0, CamConsts::RECV_BUFF_SZ ) ;
-
-    struct sockaddr_in sender_data ;
-    socklen_t sa_size = sizeof( sender_data ) ;
-
-    bool running = 1 ;
-    int recv_len = 0 ;
-    int recv_cnt = 0 ;
-
-    while( running ) {
-        std::cout << "Waiting for Packet" << std::endl ;
-
-        // receve
-		if( (recv_len = recvfrom( sock_fd, in_buf, CamConsts::RECV_BUFF_SZ, 0, (struct sockaddr *) &sender_data, &sa_size )) == -1 ) {
-			bail( "recvfrom()" ) ;
-		}
-
-        for( int i=0; i<recv_len; i++ ) {
-		    printf( "%02x ", in_buf[i] ) ;
-        }
-        printf( "\n" ) ;
-
-        // interpret
-        switch ( in_buf[ 0 ] ) {
+// Handle CnC Messages
+void handleCnC( uint8_t* msg, const size_t len ) {
+    switch ( msg[ 0 ] ) {
             /*************** C O M M A N D S *************************************/
             case CamConsts::CMD_START : {
                 // Start Streaming Centroids
@@ -173,79 +242,124 @@ void recvLoop( const int sock_fd ) {
             }
             break ;
             case CamConsts::REQ_HELLO : {
-                retort( "h" ) ;
+                packetizeNoneImg( 0, CamConsts::PACKET_TEXT, 1, 1, (uint8_t*)"h", 1, timecode ) ;
             }
             break ;
             
             /*************** R E G I S T E R S *************************************/
             case CamConsts::SET_BYTE : {
                 // set 1 byte data in 1 byte register
-                retortReg( (int) in_buf[1], in_buf[2] ) ;
-                registers.reg[ (size_t) in_buf[1] ] = in_buf[2] ;
+                if( len < 3 ){
+                    fail( "incomplete 'Set' Message (Byte)" ) ;
+                    break ;
+                }
+                retortReg( (int) msg[1], msg[2] ) ;
+                registers.reg[ (size_t) msg[1] ] = msg[2] ;
             }
             break ;
             case CamConsts::SET_SHORT  : {
                 // set 2 Byte data in 2 Byte register
+                if( len < 5 ){
+                    fail( "incomplete 'Set' Message (Short)" ) ;
+                    break ;
+                }
                 // Bit of a problem with ended-ness here
-                int reg_address = __bswap_16( *reinterpret_cast< uint16_t *>(  &in_buf[1] ) ) ;
+                int reg_address = __bswap_16( *reinterpret_cast< uint16_t *>(  &msg[1] ) ) ;
 
                 if( reg_address >= 300 ) {
                     // masks are uint16_t
-                    uint16_t val = __bswap_16( *reinterpret_cast< uint16_t* >( &in_buf[3] ) ) ;
-                    registers.reg[ reg_address   ] = in_buf[4] ;
-                    registers.reg[ reg_address+1 ] = in_buf[3] ;
+                    uint16_t val = __bswap_16( *reinterpret_cast< uint16_t* >( &msg[3] ) ) ;
+                    registers.reg[ reg_address   ] = msg[4] ;
+                    registers.reg[ reg_address+1 ] = msg[3] ;
                     retortReg( reg_address, (int) val ) ;
 
                 } else {
                     // IMUs are int16_t
-                    int16_t val = __bswap_16( *reinterpret_cast< uint16_t* >( &in_buf[3] ) ) ;
+                    int16_t val = __bswap_16( *reinterpret_cast< uint16_t* >( &msg[3] ) ) ;
                     registers.reg[ reg_address ] = (int) val ;
-                    registers.reg[ reg_address   ] = in_buf[4] ;
-                    registers.reg[ reg_address+1 ] = in_buf[3] ;
+                    registers.reg[ reg_address   ] = msg[4] ;
+                    registers.reg[ reg_address+1 ] = msg[3] ;
                     retortReg( reg_address, (int) val ) ;
                 }
             }
             break ;
             case CamConsts::SET_WORD : {
                 // set 4 byte data in 1 byte register
-                perror( "No 4 byte commands for a cammera!" ) ;
+                fail( "No 4 byte commands for a cammera!" ) ;
             }
             break ;
 
             default : {
-                perror( "Unexpected item in the bagging area!" ) ;
+                fail( "Unexpected item in the bagging area!" ) ;
             }
             break;
         }
+} // handleCnC( buffer, len )
 
-        // DEBUG: Monitor regs
-        printf( "\nfps: %d strobe: %d threashold: %d maskzone01x: %d impactrefx %d\n",
-            registers.fps, registers.strobe, registers.threshold, registers.maskzone01x, registers.impactrefx
-        ) ;
+
+
+void recvLoop( void ) {
+
+    uint8_t in_buf[ CamConsts::RECV_BUFF_SZ ] ; // receving buffer
+    memset( (char *) &in_buf, 0, CamConsts::RECV_BUFF_SZ ) ;
+
+    struct sockaddr_in sender_data ; // not used
+
+    bool running = 1 ;
+    int recv_len = 0 ;
+    size_t recv_cnt = 0 ;
+    CamConsts::QPacket packet( 0, 0, nullptr ) ; // Temp data packet
+
+    while( running ) {
+        std::cout << "Waiting for Packet" << std::endl ;
+
+        // receve
+		if( (recv_len = recvfrom( sock_rx_fd, in_buf, CamConsts::RECV_BUFF_SZ, 0, (struct sockaddr *) &sender_data, &SA_SIZE )) == -1 ) {
+			bail( "recvfrom()" ) ;
+		}
+
+        // interpret
+        handleCnC( in_buf, recv_len ) ;
+
+        // Send an enqueued packet if available, del the buffer
+        if( !transmit_queue.empty() ) {
+            packet = transmit_queue.top() ;
+            sendDatagram( packet.data, packet.size ) ;
+            hexdump( packet.data, packet.size ) ;
+            delete [] packet.data ;
+            transmit_queue.pop() ; // does this delete the packet?
+        }
 
         // exit
         recv_cnt++ ;
-        if( recv_cnt > 10 ){
+        if( recv_cnt > 11 ){
             running = 0 ;
         }
-    }
-}
+        
+    } // while running
+} // recvLoop
 
 int main( int argc, char* args[] ) {
 
     // Initalization
     initalizeRegs() ;
+
+    // Just a bogus timecode
+    timecode.h = 10 ;
+    timecode.m = 11 ;
+    timecode.s = 12 ;
+    timecode.f = 13 ;
+
     printf( "impactHi %d ImpactLo %d Impact %d\n", registers.reg[214], registers.reg[215], registers.impactrefx ) ;
 
     // Create and Bind the Socket
-	int sock_fd = setupSocket() ;
+	setupSockets() ;
 
     // receve
-    recvLoop( sock_fd ) ;
+    recvLoop() ;
 
     // cleanup
-    close( sock_fd ) ;
-    
+    close( sock_rx_fd ) ;
 
-    return 0 ;
+    return EXIT_SUCCESS ;
 }
