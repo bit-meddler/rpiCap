@@ -26,7 +26,7 @@ namespace CamConsts {
 const std::string SERVER_IP      = "192.168.0.20" ;
 const int         UDP_PORT_TX    = 1234 ; // Server's RX
 const int         UDP_PORT_RX    = 1235 ; // Server's TX
-const int         SOCKET_TIMEOUT =   10 ;
+const int         SOCKET_TIMEOUT =   10 ; // Select Timeout (secs)
 const int         RECV_BUFF_SZ   =  256 ; // should only receve 1, 3, 5, or 7 Byte messages
 
 // Command & Control
@@ -183,8 +183,10 @@ struct PacketData {
     uint32_t packet_cnt {0} ; // packet counter
 
     void inc( void ) {
-        packet_cnt = ++packet_cnt & 0x1FFF ; // 0~8191
-        roll_cnt   = ++roll_cnt   & 0x00FF ; // 0~255
+        packet_cnt++ ;
+        roll_cnt++   ;
+        packet_cnt = packet_cnt & 0x1FFF ; // 0~8191
+        roll_cnt   = roll_cnt   & 0x00FF ; // 0~255
     }
 } ;
 
