@@ -28,6 +28,9 @@
 #include <string>
 #include <cstring> // memset
 
+// Threading
+#include <mutex>
+
 // Containers
 #include <queue>
 
@@ -37,17 +40,22 @@
 
 
 // Globals
+// General Camera Control
 CamConsts::CamRegs registers{ 0 } ; // camera control registers
 CamConsts::PacketData packetData ; // Packetization aids
 CamConsts::Timecode timecode{0} ; // Global clock (This will probably change)
 const int CAM_ID = 1 ; // should be derived from IP
 
+// Socket Comunications
 int sock_rx_fd = -1 ; // CnC socket (receve)
 struct sockaddr_in sock_addr {0} ; // The "Server" to which all cameras send 'roids and other goodies
 socklen_t SA_SIZE = sizeof( sock_addr ) ; // Frequently used
 
+// 'Threadsafe' Packet Queue
 std::priority_queue< CamConsts::QPacket > transmit_queue ; // Packet queue
+std::mutex queue_mtx ;
 
+// Implementation
 // get the expected header size, based on packet data type
 inline size_t getHeadSize( const char dtype ){
     return (dtype==CamConsts::PACKET_IMAGE) ? 24 : 16 ;
@@ -62,6 +70,11 @@ void bail( const std::string msg ) {
 // An errror, but just one to report / log
 void fail( const std::string msg ) {
     std::cerr << msg << std::endl ;
+}
+
+// Just a report or log, not error
+void wail( const std::string msg ) {
+    std::cout << msg << std::endl ;
 }
 
 // initalize the registers to 0 then apply defaults
@@ -120,15 +133,15 @@ void setupSockets( void ) {
 }
 
 // form a packet header
-void composeHeader( uint8_t* data,        // buffer to write headder into
-                      size_t  num_dts,      // Number of Centroids
-                      uint8_t compression,  // Centroids Format
-                      char    packet_type,  // Packet Type
-                      size_t  frag_num,     // Fragment number
-                      size_t  frag_count,   // Fragment Count
-                      CamConsts::Timecode tc, // current time
-                      size_t img_os=0,      // image offset
-                      size_t img_sz=0  ){   // image total size
+void composeHeader( uint8_t* data,          // buffer to write headder into
+                    size_t   num_dts,       // Number of Centroids
+                    uint8_t  compression,   // Centroids Format
+                    char     packet_type,   // Packet Type
+                    size_t   frag_num,      // Fragment number
+                    size_t   frag_count,    // Fragment Count
+                    CamConsts::Timecode tc, // current time
+                    size_t   img_os=0,      // image offset
+                    size_t   img_sz=0  ) {  // image total size
 
     CamConsts::Header header ; // should be initalized as 0
 
@@ -155,6 +168,7 @@ void composeHeader( uint8_t* data,        // buffer to write headder into
     header.tc_f = tc.f ;
     header.frag_num   = frag_num ;
     header.frag_count = frag_count ;
+
     // Just zeros if unset
     header.img_os = img_os ; 
     header.img_sz = img_sz ; 
@@ -173,7 +187,10 @@ void packetizeNoneImg( size_t roid_count, char packet_type, size_t frag_num, siz
     
     // Enqueue
     CamConsts::QPacket* dgm = new CamConsts::QPacket( priority, buffer_required, dat ) ;
-    transmit_queue.push( *dgm ) ;
+    {
+        std::lock_guard<std::mutex> lock_queue( queue_mtx ) ;
+        transmit_queue.push( *dgm ) ;
+    }
     packetData.inc() ;
 }
 
@@ -185,7 +202,7 @@ void sendDatagram( uint8_t* data, size_t size ) {
         }
 }
 
-// 
+// Simple Message
 void retort( const std::string msg ) {
     // will be packetized and emitted later...
     char buff[100] ;
@@ -193,11 +210,21 @@ void retort( const std::string msg ) {
     packetizeNoneImg( 0, CamConsts::PACKET_TEXT, 1, 1, (uint8_t*)buff, strlen( buff ), timecode ) ;
 }
 
+// Regiser Setting Message
 void retortReg( const int reg, const int val ) {
     // will be packetized and emitted later...
     char buff[100] ;
     snprintf( buff, sizeof(buff), "*** CAMERA %d setting register %d to %d ***", CAM_ID, reg, val ) ;
     packetizeNoneImg( 0, CamConsts::PACKET_TEXT, 1, 1, (uint8_t*)buff, strlen( buff ), timecode ) ;
+}
+
+// send the low or high registers
+void regDump( const bool high ) {
+    if( high ) {
+        packetizeNoneImg( 0, CamConsts::PACKET_REGHI, 1, 1, &registers.fps, 824, timecode ) ;
+    } else {
+        packetizeNoneImg( 0, CamConsts::PACKET_REGLO, 1, 1, &registers.fps,  56, timecode ) ;
+    }
 }
 
 // Handle CnC Messages
@@ -228,17 +255,20 @@ void handleCnC( uint8_t* msg, const size_t len ) {
             /*************** R E Q U E S T S *************************************/
             case CamConsts::REQ_REGSLO : {
                 // Request lower registers
-                retort( "Sending Low Registers" ) ;
+                wail( "Sending Low Registers" ) ;
+                regDump( false ) ;
             }
             break ;
             case CamConsts::REQ_REGSHI  : {
                 // Request higher registers
-                retort( "Sending High Registers" ) ;
+                wail( "Sending High Registers" ) ;
+                regDump( true ) ;
             }
             break ;
             case CamConsts::REQ_VERSION : {
                 // Request version data
-                retort( "Version info" ) ;
+                wail( "Version info" ) ;
+                packetizeNoneImg( 0, CamConsts::PACKET_VERS, 1, 1, (uint8_t*)"DEADBEEF", 8, timecode ) ;
             }
             break ;
             case CamConsts::REQ_HELLO : {
@@ -300,8 +330,10 @@ void handleCnC( uint8_t* msg, const size_t len ) {
 
 void recvLoop( void ) {
 
-    uint8_t in_buf[ CamConsts::RECV_BUFF_SZ ] ; // receving buffer
-    memset( (char *) &in_buf, 0, CamConsts::RECV_BUFF_SZ ) ;
+    using CamConsts::RECV_BUFF_SZ ;
+
+    uint8_t in_buf[ RECV_BUFF_SZ ] ; // receving buffer
+    memset( (char *) &in_buf, 0, RECV_BUFF_SZ ) ;
 
     struct sockaddr_in sender_data ; // not used
 
@@ -314,28 +346,31 @@ void recvLoop( void ) {
         std::cout << "Waiting for Packet" << std::endl ;
 
         // receve
-		if( (recv_len = recvfrom( sock_rx_fd, in_buf, CamConsts::RECV_BUFF_SZ, 0, (struct sockaddr *) &sender_data, &SA_SIZE )) == -1 ) {
+		if( (recv_len = recvfrom( sock_rx_fd, in_buf, RECV_BUFF_SZ, 0, (struct sockaddr *) &sender_data, &SA_SIZE )) == -1 ) {
 			bail( "recvfrom()" ) ;
 		}
 
         // interpret
         handleCnC( in_buf, recv_len ) ;
 
-        // Send an enqueued packet if available, del the buffer
-        if( !transmit_queue.empty() ) {
-            packet = transmit_queue.top() ;
-            sendDatagram( packet.data, packet.size ) ;
-            hexdump( packet.data, packet.size ) ;
-            delete [] packet.data ;
-            transmit_queue.pop() ; // does this delete the packet?
+        // Lock the Queue
+        {
+            std::lock_guard<std::mutex> lock_queue( queue_mtx ) ;
+            // If available, send an enqueued packet. Deleting the datagram buffer once sent.
+            if( !transmit_queue.empty() ) {
+                packet = transmit_queue.top() ;
+                sendDatagram( packet.data, packet.size ) ;
+                hexdump( packet.data, packet.size ) ;
+                delete [] packet.data ;
+                transmit_queue.pop() ; // does this delete the packet?
+            }
         }
-
         // exit
         recv_cnt++ ;
-        if( recv_cnt > 11 ){
+        if( recv_cnt > 11 ) {
             running = 0 ;
         }
-        
+
     } // while running
 } // recvLoop
 
