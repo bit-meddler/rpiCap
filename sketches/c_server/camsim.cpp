@@ -22,8 +22,11 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <sys/select.h>
+#include <sys/fcntl.h> // set non-blocking on the CnC Port?
 
 // Language
+#include <sys/types.h>
 #include <iostream>
 #include <string>
 #include <cstring> // memset
@@ -50,12 +53,14 @@ const int CAM_ID = 1 ; // should be derived from IP
 int sock_rx_fd = -1 ; // CnC socket (receve)
 struct sockaddr_in sock_addr {0} ; // The "Server" to which all cameras send 'roids and other goodies
 socklen_t SA_SIZE = sizeof( sock_addr ) ; // Frequently used
+int num_fds = -1; // max fd num
 
 // 'Threadsafe' Packet Queue
 std::priority_queue< CamConsts::QPacket > transmit_queue ; // Packet queue
 std::mutex queue_mtx ;
 
 // Implementation
+
 // get the expected header size, based on packet data type
 inline size_t getHeadSize( const char dtype ){
     return (dtype==CamConsts::PACKET_IMAGE) ? 24 : 16 ;
@@ -113,36 +118,38 @@ void setupSockets( void ) {
     }
 
     // Receving Socket
-	if( (sock_rx_fd=socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP )) == -1 ) {
+    if( (sock_rx_fd=socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP )) == -1 ) {
         bail( "Failed to Create RX Socket" ) ;
-	}
+    }
 
-	sock_addr.sin_family = AF_INET ;
-	sock_addr.sin_port = htons( CamConsts::UDP_PORT_TX ) ;
-	sock_addr.sin_addr.s_addr = htonl( INADDR_ANY ) ;
+    sock_addr.sin_family = AF_INET ;
+    sock_addr.sin_port = htons( CamConsts::UDP_PORT_TX ) ;
+    sock_addr.sin_addr.s_addr = htonl( INADDR_ANY ) ;
 
-	if( bind( sock_rx_fd, (struct sockaddr*) &sock_addr, SA_SIZE ) == -1) {
-		bail( "Error Binding RX SOcket" ) ;
-	}
+    if( bind( sock_rx_fd, (struct sockaddr*) &sock_addr, SA_SIZE ) == -1) {
+        bail( "Error Binding RX SOcket" ) ;
+    }
 
     // Setup Target Address (Allways send to fixed ip:port)
-	sock_addr.sin_family = AF_INET ;
-	sock_addr.sin_port = htons( CamConsts::UDP_PORT_RX ) ;
-	sock_addr.sin_addr.s_addr = inet_addr( CamConsts::SERVER_IP.c_str() ) ;
+    sock_addr.sin_family = AF_INET ;
+    sock_addr.sin_port = htons( CamConsts::UDP_PORT_RX ) ;
+    sock_addr.sin_addr.s_addr = inet_addr( CamConsts::SERVER_IP.c_str() ) ;
 
+    // count fds for select
+    num_fds = sock_rx_fd + 1 ;
 }
 
 // form a packet header
-void composeHeader( uint8_t* data,          // buffer to write headder into
-                    size_t   num_dts,       // Number of Centroids
-                    uint8_t  compression,   // Centroids Format
-                    char     packet_type,   // Packet Type
-                    size_t   frag_num,      // Fragment number
-                    size_t   frag_count,    // Fragment Count
-                    CamConsts::Timecode tc, // current time
-                    size_t   img_os=0,      // image offset
-                    size_t   img_sz=0  ) {  // image total size
-
+void composeHeader(       uint8_t* data,          // buffer to write headder into
+                    const size_t   num_dts,       // Number of Centroids
+                    const uint8_t  compression,   // Centroids Format
+                    const char     packet_type,   // Packet Type
+                    const size_t   frag_num,      // Fragment number
+                    const size_t   frag_count,    // Fragment Count
+                    const CamConsts::Timecode tc, // current time
+                    const size_t   img_os=0,      // image offset
+                    const size_t   img_sz=0       // image total size
+) {
     CamConsts::Header header ; // should be initalized as 0
 
     // Encode Rolling Packet count
@@ -177,7 +184,14 @@ void composeHeader( uint8_t* data,          // buffer to write headder into
     memcpy( data, &header, size ) ;
 }
 
-void packetizeNoneImg( size_t roid_count, char packet_type, size_t frag_num, size_t frag_count, uint8_t* data, size_t data_sz, CamConsts::Timecode tc ) {
+void packetizeNoneImg( const size_t roid_count, // total number of centroids
+                       const char packet_type,  // Packet Type
+                       const size_t frag_num,   // Fragment number
+                       const size_t frag_count, // Fragment Count
+                       const uint8_t* data,     // Payload
+                       const size_t data_sz,    // Size of Payload
+                       const CamConsts::Timecode tc // Current time
+) {
     size_t buffer_required = 16 + data_sz ;
     uint8_t* dat = new uint8_t[ buffer_required ]{0} ;
     composeHeader( dat, roid_count, 0x04, packet_type, frag_num, frag_count, tc ) ;
@@ -326,35 +340,68 @@ void handleCnC( uint8_t* msg, const size_t len ) {
         }
 } // handleCnC( buffer, len )
 
-
-
+// Main loop for CnC.  Will be semaphored when data (Image/Centroids) are available.
 void recvLoop( void ) {
 
+    // receve Buffer
     using CamConsts::RECV_BUFF_SZ ;
-
     uint8_t in_buf[ RECV_BUFF_SZ ] ; // receving buffer
     memset( (char *) &in_buf, 0, RECV_BUFF_SZ ) ;
-
-    struct sockaddr_in sender_data ; // not used
-
-    bool running = 1 ;
     int recv_len = 0 ;
+
+    // Networking
+    struct sockaddr_in sender_data ; // not used
+    fd_set readable_fds ; // set of readable fds
+    struct timeval select_timeout ; // timeout for select
+    int ready_fd = 0 ; // result of select -1: error, 0: timeout, 1: OK
+
+
+
+    // System Control
+    bool running = 1 ;
     size_t recv_cnt = 0 ;
+
+    // For Packet sending
     CamConsts::QPacket packet( 0, 0, nullptr ) ; // Temp data packet
 
     while( running ) {
         std::cout << "Waiting for Packet" << std::endl ;
 
-        // receve
-		if( (recv_len = recvfrom( sock_rx_fd, in_buf, RECV_BUFF_SZ, 0, (struct sockaddr *) &sender_data, &SA_SIZE )) == -1 ) {
-			bail( "recvfrom()" ) ;
-		}
+        // Select
+        select_timeout.tv_sec = CamConsts::SOCKET_TIMEOUT ;
+        select_timeout.tv_usec = 0 ;
+        FD_ZERO( &readable_fds ) ;
+        FD_SET( sock_rx_fd, &readable_fds) ;
 
-        // interpret
-        handleCnC( in_buf, recv_len ) ;
+        ready_fd = select( num_fds, &readable_fds, NULL, NULL, &select_timeout) ;
 
-        // Lock the Queue
-        {
+        if( ready_fd < 0) {
+            bail( "Error in 'select'" ) ;
+        } else if( ready_fd == 0 )  {
+            wail( "select Timed out" ) ;
+        } else {
+            // DTRT bassed on the available socket
+            if( FD_ISSET( sock_rx_fd, &readable_fds ) ) {
+                // receve from CnC Socket
+                if( (recv_len = recvfrom( sock_rx_fd, in_buf, RECV_BUFF_SZ, 0, (struct sockaddr *) &sender_data, &SA_SIZE )) == -1 ) {
+                    bail( "recvfrom()" ) ;
+                }
+                // message receved
+                recv_cnt++ ;
+
+                // interpret the message
+                handleCnC( in_buf, recv_len ) ;
+
+                // clean up the buffer
+                memset( (char *) &in_buf, 0, recv_len ) ;
+
+                // Tidy up the socket set
+                FD_CLR( sock_rx_fd, &readable_fds ) ;
+            }
+        } // handling 'selected' file descriptors
+
+        // emit any available packets TODO: this needs to be signaled by an fd as well event_fd ?
+        {   // Lock the Queue
             std::lock_guard<std::mutex> lock_queue( queue_mtx ) ;
             // If available, send an enqueued packet. Deleting the datagram buffer once sent.
             if( !transmit_queue.empty() ) {
@@ -365,8 +412,8 @@ void recvLoop( void ) {
                 transmit_queue.pop() ; // does this delete the packet?
             }
         }
+
         // exit
-        recv_cnt++ ;
         if( recv_cnt > 11 ) {
             running = 0 ;
         }
@@ -374,6 +421,7 @@ void recvLoop( void ) {
     } // while running
 } // recvLoop
 
+// entry point
 int main( int argc, char* args[] ) {
 
     // Initalization
@@ -388,7 +436,7 @@ int main( int argc, char* args[] ) {
     printf( "impactHi %d ImpactLo %d Impact %d\n", registers.reg[214], registers.reg[215], registers.impactrefx ) ;
 
     // Create and Bind the Socket
-	setupSockets() ;
+    setupSockets() ;
 
     // receve
     recvLoop() ;
