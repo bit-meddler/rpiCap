@@ -25,6 +25,10 @@
 #include <sys/select.h>
 #include <sys/fcntl.h> // set non-blocking on the CnC Port?
 
+// Linux / Posix stuff
+#include <unistd.h>
+#include <sys/eventfd.h>
+
 // Language
 #include <sys/types.h>
 #include <iostream>
@@ -46,6 +50,7 @@
 // General Camera Control
 CamConsts::CamRegs registers{ 0 } ; // camera control registers
 CamConsts::PacketData packetData ; // Packetization aids
+std::mutex packet_dat_mtx ; // OK this needs a mutex as well
 CamConsts::Timecode timecode{0} ; // Global clock (This will probably change)
 const int CAM_ID = 1 ; // should be derived from IP
 
@@ -53,6 +58,11 @@ const int CAM_ID = 1 ; // should be derived from IP
 int sock_rx_fd = -1 ; // CnC socket (receve)
 struct sockaddr_in sock_addr {0} ; // The "Server" to which all cameras send 'roids and other goodies
 socklen_t SA_SIZE = sizeof( sock_addr ) ; // Frequently used
+// eventfd
+int queue_rx_efd = -1 ; // when emplacing on the queue also write to the efd
+const size_t EFD_SIZE = sizeof( uint64_t ) ;
+const uint64_t EFD_ONE = 1 ; // we frequently write one to the efd
+// for select
 int num_fds = -1; // max fd num
 
 // 'Threadsafe' Packet Queue
@@ -107,7 +117,7 @@ void initalizeRegs( void ) {
 }
 
 // setup the UDP Socket for CnC
-void setupSockets( void ) {
+void setupComunications( void ) {
 
     //memset( (char *) &sock_addr, 0, sizeof( sock_addr ) ) ;
 
@@ -118,7 +128,8 @@ void setupSockets( void ) {
     }
 
     // Receving Socket
-    if( (sock_rx_fd=socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP )) == -1 ) {
+    sock_rx_fd = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP ) ;
+    if( sock_rx_fd == -1 ) {
         bail( "Failed to Create RX Socket" ) ;
     }
 
@@ -135,8 +146,20 @@ void setupSockets( void ) {
     sock_addr.sin_port = htons( CamConsts::UDP_PORT_RX ) ;
     sock_addr.sin_addr.s_addr = inet_addr( CamConsts::SERVER_IP.c_str() ) ;
 
+    // Event File Descriptors
+    queue_rx_efd = eventfd( 0, 0 ) ;
+    if( queue_rx_efd == -1 ) {
+        bail( "ERROR creating eventfd" ) ;
+    }
+
     // count fds for select
-    num_fds = sock_rx_fd + 1 ;
+    num_fds = queue_rx_efd + 1 ;
+}
+
+// cleanly close the sockets and anything else
+void teardownComunications( void ) {
+    close( sock_rx_fd ) ;
+    close( queue_rx_efd ) ;
 }
 
 // form a packet header
@@ -150,6 +173,7 @@ void composeHeader(       uint8_t* data,          // buffer to write headder int
                     const size_t   img_os=0,      // image offset
                     const size_t   img_sz=0       // image total size
 ) {
+    std::lock_guard<std::mutex> lock_packet_dat( packet_dat_mtx ) ;
     CamConsts::Header header ; // should be initalized as 0
 
     // Encode Rolling Packet count
@@ -196,6 +220,10 @@ void packetizeNoneImg( const size_t roid_count, // total number of centroids
     uint8_t* dat = new uint8_t[ buffer_required ]{0} ;
     composeHeader( dat, roid_count, 0x04, packet_type, frag_num, frag_count, tc ) ;
     memcpy( dat+16, data, data_sz ) ;
+    {
+        std::lock_guard<std::mutex> lock_packet_dat( packet_dat_mtx ) ;
+        packetData.inc() ;
+    }
     int priority = (packet_type==CamConsts::PACKET_ROIDS) ? CamConsts::PRI_IMMEDIATE : CamConsts::PRI_NORMAL ;
     priority += frag_num ;
     
@@ -204,8 +232,13 @@ void packetizeNoneImg( const size_t roid_count, // total number of centroids
     {
         std::lock_guard<std::mutex> lock_queue( queue_mtx ) ;
         transmit_queue.push( *dgm ) ;
+
+        // announce the packet on the queue
+        size_t write_sz = write( queue_rx_efd, &EFD_ONE, EFD_SIZE ) ;
+        if( write_sz != EFD_SIZE ) {
+            bail( "ERROR writing to the queue efd" ) ;
+        }
     }
-    packetData.inc() ;
 }
 
 // send packets
@@ -347,7 +380,8 @@ void recvLoop( void ) {
     using CamConsts::RECV_BUFF_SZ ;
     uint8_t in_buf[ RECV_BUFF_SZ ] ; // receving buffer
     memset( (char *) &in_buf, 0, RECV_BUFF_SZ ) ;
-    int recv_len = 0 ;
+    int recv_len = 0 ; // how many bytes we have read
+    uint64_t queue_rx_cnt = 0 ; // value from the queue event
 
     // Networking
     struct sockaddr_in sender_data ; // not used
@@ -360,6 +394,7 @@ void recvLoop( void ) {
     // System Control
     bool running = 1 ;
     size_t recv_cnt = 0 ;
+    size_t send_cnt = 0 ;
 
     // For Packet sending
     CamConsts::QPacket packet( 0, 0, nullptr ) ; // Temp data packet
@@ -371,7 +406,10 @@ void recvLoop( void ) {
         select_timeout.tv_sec = CamConsts::SOCKET_TIMEOUT ;
         select_timeout.tv_usec = 0 ;
         FD_ZERO( &readable_fds ) ;
-        FD_SET( sock_rx_fd, &readable_fds) ;
+        FD_SET( sock_rx_fd,   &readable_fds) ;
+        FD_SET( queue_rx_efd, &readable_fds) ;
+
+        queue_rx_cnt = 0 ; // size of queue
 
         ready_fd = select( num_fds, &readable_fds, NULL, NULL, &select_timeout) ;
 
@@ -383,8 +421,9 @@ void recvLoop( void ) {
             // DTRT bassed on the available socket
             if( FD_ISSET( sock_rx_fd, &readable_fds ) ) {
                 // receve from CnC Socket
-                if( (recv_len = recvfrom( sock_rx_fd, in_buf, RECV_BUFF_SZ, 0, (struct sockaddr *) &sender_data, &SA_SIZE )) == -1 ) {
-                    bail( "recvfrom()" ) ;
+                recv_len = recvfrom( sock_rx_fd, in_buf, RECV_BUFF_SZ, 0, (struct sockaddr *) &sender_data, &SA_SIZE ) ;
+                if( recv_len == -1 ) {
+                    bail( "Error Reading from CnC Socket" ) ;
                 }
                 // message receved
                 recv_cnt++ ;
@@ -398,15 +437,26 @@ void recvLoop( void ) {
                 // Tidy up the socket set
                 FD_CLR( sock_rx_fd, &readable_fds ) ;
             }
+
+            if( FD_ISSET( queue_rx_efd, &readable_fds ) ) {
+                //
+                recv_len = read( queue_rx_efd, &queue_rx_cnt, EFD_SIZE ) ;
+                if( recv_len != EFD_SIZE ) {
+                    bail( "ERROR reading" ) ;
+                }
+                printf( "efd says '%lld'\n", queue_rx_cnt ) ;
+                FD_CLR( queue_rx_efd, &readable_fds ) ;
+            }
         } // handling 'selected' file descriptors
 
-        // emit any available packets TODO: this needs to be signaled by an fd as well event_fd ?
-        {   // Lock the Queue
+        // emit any available packets
+        if( queue_rx_cnt > 0 ) {
             std::lock_guard<std::mutex> lock_queue( queue_mtx ) ;
             // If available, send an enqueued packet. Deleting the datagram buffer once sent.
             if( !transmit_queue.empty() ) {
                 packet = transmit_queue.top() ;
                 sendDatagram( packet.data, packet.size ) ;
+                send_cnt += 1 ;
                 hexdump( packet.data, packet.size ) ;
                 delete [] packet.data ;
                 transmit_queue.pop() ; // does this delete the packet?
@@ -419,6 +469,8 @@ void recvLoop( void ) {
         }
 
     } // while running
+    printf( "receved %d, sent %d\n", recv_cnt, send_cnt ) ;
+
 } // recvLoop
 
 // entry point
@@ -433,16 +485,14 @@ int main( int argc, char* args[] ) {
     timecode.s = 12 ;
     timecode.f = 13 ;
 
-    printf( "impactHi %d ImpactLo %d Impact %d\n", registers.reg[214], registers.reg[215], registers.impactrefx ) ;
-
     // Create and Bind the Socket
-    setupSockets() ;
+    setupComunications() ;
 
     // receve
     recvLoop() ;
 
     // cleanup
-    close( sock_rx_fd ) ;
+    teardownComunications() ;
 
     return EXIT_SUCCESS ;
 }
