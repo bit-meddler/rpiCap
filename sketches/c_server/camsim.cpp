@@ -36,6 +36,7 @@
 #include <cstring> // memset
 
 // Threading
+#include <thread>
 #include <mutex>
 
 // Containers
@@ -52,7 +53,11 @@ CamConsts::CamRegs registers{ 0 } ; // camera control registers
 CamConsts::PacketData packetData ; // Packetization aids
 std::mutex packet_dat_mtx ; // OK this needs a mutex as well
 CamConsts::Timecode timecode{0} ; // Global clock (This will probably change)
-const int CAM_ID = 1 ; // should be derived from IP
+
+// 'Fixed' Settings
+const int  CAM_ID = 1 ; // should be derived from IP TBH
+const char CENTROID_COMPRESSION = CamConsts::ROIDS_8BYTE ;
+const char CENTROID_SIZE = 10 ;
 
 // Socket Comunications
 int sock_rx_fd = -1 ; // CnC socket (receve)
@@ -208,22 +213,22 @@ void composeHeader(       uint8_t* data,          // buffer to write headder int
     memcpy( data, &header, size ) ;
 }
 
-void packetizeNoneImg( const size_t roid_count, // total number of centroids
-                       const char packet_type,  // Packet Type
-                       const size_t frag_num,   // Fragment number
-                       const size_t frag_count, // Fragment Count
-                       const uint8_t* data,     // Payload
-                       const size_t data_sz,    // Size of Payload
+void packetizeNoneImg( const size_t   roid_count,   // total number of centroids
+                       const char     packet_type,  // Packet Type
+                       const size_t   frag_num,     // Fragment number
+                       const size_t   frag_count,   // Fragment Count
+                       const uint8_t* data,         // Payload
+                       const size_t   data_sz,      // Size of Payload
                        const CamConsts::Timecode tc // Current time
 ) {
     size_t buffer_required = 16 + data_sz ;
     uint8_t* dat = new uint8_t[ buffer_required ]{0} ;
-    composeHeader( dat, roid_count, 0x04, packet_type, frag_num, frag_count, tc ) ;
-    memcpy( dat+16, data, data_sz ) ;
+    composeHeader( dat, roid_count, CENTROID_COMPRESSION, packet_type, frag_num, frag_count, tc ) ;
     {
         std::lock_guard<std::mutex> lock_packet_dat( packet_dat_mtx ) ;
         packetData.inc() ;
     }
+    memcpy( dat+16, data, data_sz ) ;
     int priority = (packet_type==CamConsts::PACKET_ROIDS) ? CamConsts::PRI_IMMEDIATE : CamConsts::PRI_NORMAL ;
     priority += frag_num ;
     
@@ -238,6 +243,27 @@ void packetizeNoneImg( const size_t roid_count, // total number of centroids
         if( write_sz != EFD_SIZE ) {
             bail( "ERROR writing to the queue efd" ) ;
         }
+    }
+}
+
+// break apart a vector of packed Centroids into fragments, respecting the "max dets" register setting.
+void fragmentCentroids(       vision::Roid8Vec_t  data, // Vector of centroids to fragment & enque (can't be const for cast)
+                        const CamConsts::Timecode tc    // Current time
+) {
+    const int max_dets = registers.numdets * 10 ;
+    const int num_dets = data.size() ;
+    int num_packets     = num_dets / max_dets ;
+    int remaining_roids = num_dets % max_dets ;
+    num_packets += (remaining_roids>0) ? 1 : 0 ;
+
+    const int slice_size = max_dets * CENTROID_SIZE ;
+    const int total_size = num_dets * CENTROID_SIZE ;
+    int packet_no = 1 ;
+
+    for( size_t i=0; i<total_size; i+=slice_size ) {
+        packetizeNoneImg( num_dets, CamConsts::PACKET_ROIDS, packet_no, num_packets,
+                          reinterpret_cast<uint8_t*>(data.data()+i), slice_size, tc ) ;
+        packet_no++ ;
     }
 }
 
@@ -265,15 +291,6 @@ void retortReg( const int reg, const int val ) {
     packetizeNoneImg( 0, CamConsts::PACKET_TEXT, 1, 1, (uint8_t*)buff, strlen( buff ), timecode ) ;
 }
 
-// send the low or high registers
-void regDump( const bool high ) {
-    if( high ) {
-        packetizeNoneImg( 0, CamConsts::PACKET_REGHI, 1, 1, &registers.fps, 824, timecode ) ;
-    } else {
-        packetizeNoneImg( 0, CamConsts::PACKET_REGLO, 1, 1, &registers.fps,  56, timecode ) ;
-    }
-}
-
 // Handle CnC Messages
 void handleCnC( uint8_t* msg, const size_t len ) {
     switch ( msg[ 0 ] ) {
@@ -281,21 +298,26 @@ void handleCnC( uint8_t* msg, const size_t len ) {
             case CamConsts::CMD_START : {
                 // Start Streaming Centroids
                 retort( "Start Centroids" ) ;
+                registers._roid_stream = 1 ;
             }
             break ;
             case CamConsts::CMD_STOP  : {
-                // Stop Streaming Centroids
-                retort( "Stop Centroids" ) ;
+                // Stop Streaming everything
+                retort( "Stop Streaming" ) ;
+                registers._roid_stream = 0 ;
+                registers._img_stream  = 0 ;
             }
             break ;
             case CamConsts::CMD_SINGLE : {
                 // Send a lineup image
                 retort( "Send Image" ) ;
+                registers._send_one_img = 1 ;
             }
             break ;
             case CamConsts::CMD_STREAM : {
                 // Start Streaming Images (line speed limited)
                 retort( "Start Image Stream") ;
+                registers._img_stream = 1 ;
             }
             break ;
 
@@ -303,13 +325,13 @@ void handleCnC( uint8_t* msg, const size_t len ) {
             case CamConsts::REQ_REGSLO : {
                 // Request lower registers
                 wail( "Sending Low Registers" ) ;
-                regDump( false ) ;
+                packetizeNoneImg( 0, CamConsts::PACKET_REGLO, 1, 1, &registers.fps,  56, timecode ) ;
             }
             break ;
             case CamConsts::REQ_REGSHI  : {
                 // Request higher registers
                 wail( "Sending High Registers" ) ;
-                regDump( true ) ;
+                packetizeNoneImg( 0, CamConsts::PACKET_REGHI, 1, 1, &registers.fps, 824, timecode ) ;
             }
             break ;
             case CamConsts::REQ_VERSION : {
@@ -389,10 +411,8 @@ void recvLoop( void ) {
     struct timeval select_timeout ; // timeout for select
     int ready_fd = 0 ; // result of select -1: error, 0: timeout, 1: OK
 
-
-
     // System Control
-    bool running = 1 ;
+    bool   running  = 1 ;
     size_t recv_cnt = 0 ;
     size_t send_cnt = 0 ;
 
@@ -452,6 +472,7 @@ void recvLoop( void ) {
         // emit any available packets
         if( queue_rx_cnt > 0 ) {
             std::lock_guard<std::mutex> lock_queue( queue_mtx ) ;
+
             // If available, send an enqueued packet. Deleting the datagram buffer once sent.
             if( !transmit_queue.empty() ) {
                 packet = transmit_queue.top() ;
@@ -461,7 +482,15 @@ void recvLoop( void ) {
                 delete [] packet.data ;
                 transmit_queue.pop() ; // does this delete the packet?
             }
-        }
+
+            // If more datagrams are in the queue, write to the efd
+            if( !transmit_queue.empty() ) {
+                recv_len = write( queue_rx_efd, &EFD_ONE, EFD_SIZE ) ;
+                if( recv_len != EFD_SIZE ) {
+                    bail( "ERROR writing to the queue efd" ) ;
+                }
+            }
+        } // end queue lockguard scope
 
         // exit
         if( recv_cnt > 11 ) {
@@ -472,6 +501,20 @@ void recvLoop( void ) {
     printf( "receved %d, sent %d\n", recv_cnt, send_cnt ) ;
 
 } // recvLoop
+
+// this is spawned as a thread, 
+void simulateCamera( void ) {
+    while( 1 ) {
+        std::this_thread::sleep_for( std::chrono::milliseconds( 1000 ) ) ;
+        // enqueue some bogus centroid data
+        if( registers._roid_stream ) {
+            //
+            vision::Roid8Vec_t packed_centroids ;
+            packed_centroids.reserve( 12 ) ;
+
+        }
+    }
+}
 
 // entry point
 int main( int argc, char* args[] ) {

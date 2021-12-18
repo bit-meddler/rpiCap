@@ -50,6 +50,10 @@ const char PACKET_REGHI = 0x0E ;
 const char PACKET_TEXT  = 0x10 ;
 const char PACKET_VERS  = 0x11 ;
 
+// Centroid Pack format
+const char ROIDS_8BYTE  = 0x00 ;
+const char ROIDS_10BYTE = 0x04 ;
+
 // Queue Priority
 const int  PRI_IMMEDIATE =  1 ;
 const int  PRI_NORMAL    = 10 ;
@@ -82,7 +86,12 @@ struct CamRegs {
     union {
         uint8_t       reg[1024] ;          // index access
         struct {                           // variable access
-            uint8_t   __unknown_0[200] ;   // Here be Dragons
+            /******** P R I V A T E  R E G S ****************************/
+            uint8_t   _roid_stream ;       // PRIVATE should we be streaming 'roids?
+            uint8_t   _send_one_img ;      // send one image
+            uint8_t   _img_stream ;        // stream images
+            uint8_t   __unknown_0[197] ;   // Here be Dragons
+            /******** K N O W N   R E G S *******************************/
             uint8_t   fps ;                // reg 200
             uint8_t   __unknown_1[3] ;     // Unknown
             uint8_t   strobe ;             // reg 204
@@ -209,3 +218,21 @@ struct Header {
 } ;
 
 } // namespace CamConsts
+
+namespace vision {
+// Just borrowed from the computer vusion lib in the main branch - just for testing & experimentation
+
+// 8-Byte Centroid format
+struct packedCentroids8 {
+uint16_t  xd ; // Decimal part of X
+uint8_t   xf ; // Fractional part of X
+
+uint16_t  yd ; // Decimal part of Y
+uint8_t   yf ; // Fractional part of Y
+
+uint8_t   rd ; // Decimal part of Radius
+uint8_t   rf ; // Fractional part of Radius
+} ;
+typedef std::vector< packedCentroids8 > Roid8Vec_t ;
+
+} // namespace vision
