@@ -21,7 +21,6 @@
 // Networking Imports
 #include <arpa/inet.h>
 #include <sys/socket.h>
-#include <unistd.h>
 #include <sys/select.h>
 #include <sys/fcntl.h> // set non-blocking on the CnC Port?
 
@@ -74,7 +73,11 @@ int num_fds = -1; // max fd num
 std::priority_queue< CamConsts::QPacket > transmit_queue ; // Packet queue
 std::mutex queue_mtx ;
 
-// Implementation
+// Camera Simulation
+const int SIM_DELAY = 32 ; // ms delay between sim packets
+const int SIM_NUM_ROIDS = 12 ;
+
+/*************************************************************************** I M P L E M E N T A T I O N *************/
 
 // get the expected header size, based on packet data type
 inline size_t getHeadSize( const char dtype ){
@@ -256,8 +259,8 @@ void fragmentCentroids(       vision::Roid8Vec_t  data, // Vector of centroids t
     int remaining_roids = num_dets % max_dets ;
     num_packets += (remaining_roids>0) ? 1 : 0 ;
 
-    const int slice_size = max_dets * CENTROID_SIZE ;
-    const int total_size = num_dets * CENTROID_SIZE ;
+    const size_t slice_size = max_dets * CENTROID_SIZE ;
+    const size_t total_size = num_dets * CENTROID_SIZE ;
     int packet_no = 1 ;
 
     for( size_t i=0; i<total_size; i+=slice_size ) {
@@ -419,8 +422,9 @@ void recvLoop( void ) {
     // For Packet sending
     CamConsts::QPacket packet( 0, 0, nullptr ) ; // Temp data packet
 
+    wail( "CAMERA STARTED!" ) ;
     while( running ) {
-        std::cout << "Waiting for Packet" << std::endl ;
+        // std::cout << "Waiting for Packet" << std::endl ;
 
         // Select
         select_timeout.tv_sec = CamConsts::SOCKET_TIMEOUT ;
@@ -493,7 +497,7 @@ void recvLoop( void ) {
         } // end queue lockguard scope
 
         // exit
-        if( recv_cnt > 11 ) {
+        if( recv_cnt > 17 ) {
             running = 0 ;
         }
 
@@ -504,14 +508,25 @@ void recvLoop( void ) {
 
 // this is spawned as a thread, 
 void simulateCamera( void ) {
+    // don't bother with memory managment just yet...
     while( 1 ) {
-        std::this_thread::sleep_for( std::chrono::milliseconds( 1000 ) ) ;
+        std::this_thread::sleep_for( std::chrono::milliseconds( SIM_DELAY ) ) ;
         // enqueue some bogus centroid data
         if( registers._roid_stream ) {
-            //
+            // Step 1 Steal Underpants.
             vision::Roid8Vec_t packed_centroids ;
-            packed_centroids.reserve( 12 ) ;
+            packed_centroids.reserve( SIM_NUM_ROIDS ) ;
 
+            // Step 2 ...
+            for( size_t i=1; i<SIM_NUM_ROIDS; i++ ) {
+                vision::packedCentroids8 dum ;
+                dum.xd = dum.xf = dum.yd = dum.yf = dum.rd = dum.rf = (uint8_t) i ;
+                packed_centroids.push_back( dum ) ;
+            }
+
+            // Step 3 Profit !
+            CamConsts::Timecode frozen_time = timecode ; // deep copy?
+            fragmentCentroids( packed_centroids, frozen_time ) ;
         }
     }
 }
@@ -531,10 +546,15 @@ int main( int argc, char* args[] ) {
     // Create and Bind the Socket
     setupComunications() ;
 
-    // receve
-    recvLoop() ;
+    // CnC Thread
+    std::thread thread_CnC( recvLoop ) ;
+    std::thread* thread_Cam = new std::thread( simulateCamera ) ;
+
+    thread_Cam->detach() ;
+    thread_CnC.join() ;
 
     // cleanup
+    delete thread_Cam ;
     teardownComunications() ;
 
     return EXIT_SUCCESS ;
