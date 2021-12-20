@@ -78,6 +78,10 @@ std::mutex queue_mtx ;
 const int SIM_DELAY = 999 ; // ms delay between sim packets
 const int SIM_NUM_ROIDS = 275 ;
 
+// Threads
+std::thread* thread_Cam ;
+std::thread* thread_CnC ;
+
 // Retort messages - and a little journey back to '98
 char RETORTS[192]{0} ;
 size_t RETORT_STRIDES[6] = {0, 0, 0, 0, 0, 0} ;
@@ -155,6 +159,26 @@ void initalizeRetorts( void ) {
         printf( "[%d] %d>%s<%d\n", i, RETORT_STRIDES[i], RETORTS+RETORT_STRIDES[i], RETORT_STRIDES[i+1] ) ;
     }
     */
+}
+
+// Lock the 2 main threads to cores 0,1 or 2,3 so they share cache
+void pinThreads( void ) {
+    int result ;
+    cpu_set_t cpuset ;
+    
+    CPU_ZERO( &cpuset ) ;
+    CPU_SET( 2, &cpuset) ;
+    result = pthread_setaffinity_np( thread_Cam->native_handle(), sizeof( cpu_set_t ), &cpuset ) ;
+    if( result != 0 ) {
+      fail( "Error setting Camera Thread Affinity" ) ;
+    }
+
+    CPU_ZERO( &cpuset ) ;
+    CPU_SET( 3, &cpuset) ;
+    result = pthread_setaffinity_np( thread_CnC->native_handle(), sizeof( cpu_set_t ), &cpuset ) ;
+    if( result != 0 ) {
+      fail( "Error setting CnC Thread Affinity" ) ;
+    }
 }
 
 // setup the UDP Socket for CnC
@@ -604,14 +628,19 @@ int main( int argc, char* args[] ) {
     setupComunications() ;
 
     // CnC / Camera Threads
-    std::thread thread_CnC( recvLoop ) ;
-    std::thread* thread_Cam = new std::thread( simulateCamera ) ;
+    thread_CnC = new std::thread( recvLoop ) ;
+    thread_Cam = new std::thread( simulateCamera ) ;
 
+    // set Thread Affinity
+    pinThreads() ;
+
+    // wait till CnC joins (in practice, will never happen)
     thread_Cam->detach() ;
-    thread_CnC.join() ;
+    thread_CnC->join() ;
 
     // cleanup
     delete thread_Cam ;
+    delete thread_CnC ;
     teardownComunications() ;
 
     return EXIT_SUCCESS ;
