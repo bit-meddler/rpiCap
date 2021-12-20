@@ -76,7 +76,7 @@ std::mutex queue_mtx ;
 
 // Camera Simulation
 const int SIM_DELAY = 999 ; // ms delay between sim packets
-const int SIM_NUM_ROIDS = 12 ;
+const int SIM_NUM_ROIDS = 275 ;
 
 // Retort messages - and a little journey back to '98
 char RETORTS[192]{0} ;
@@ -286,20 +286,35 @@ void packetizeNoneImg( const size_t   roid_count,   // total number of centroids
 void fragmentCentroids(       vision::Roid8Vec_t  data, // Vector of centroids to fragment & enque (can't be const for cast)
                         const CamConsts::Timecode tc    // Current time
 ) {
-    const int max_dets = registers.numdets * 10 ;
-    const int num_dets = data.size() ;
-    int num_packets     = num_dets / max_dets ;
-    int remaining_roids = num_dets % max_dets ;
-    num_packets += (remaining_roids>0) ? 1 : 0 ;
-
+    // dets
+    const int    max_dets   = registers.numdets * 10 ;
     const size_t slice_size = max_dets * CENTROID_SIZE ;
-    const size_t total_size = num_dets * CENTROID_SIZE ;
-    int packet_no = 1 ;
+    const int    num_dets   = data.size() ;
 
-    for( size_t i=0; i<total_size; i+=slice_size ) {
+    // packets
+          int num_packets     = num_dets / max_dets ;
+    const int remaining_roids = num_dets % max_dets ;
+    const int have_remains    = (remaining_roids>0) ? 1 : 0 ;
+
+    // remaining packet ?
+    num_packets += have_remains ;
+
+    // Do all the "Complete Packets"
+    const size_t complete_packets = (size_t) (num_packets - (1*have_remains)) ; // take back one packet if there's remains
+    int packet_no = 1 ;
+    for( size_t i=0; i<complete_packets; i++ ) {
         packetizeNoneImg( num_dets, CamConsts::PACKET_ROIDS, packet_no, num_packets,
-                          reinterpret_cast<uint8_t*>(data.data()+i), slice_size, tc ) ;
+                          reinterpret_cast<uint8_t*>(data.data()) + (slice_size*i), slice_size, tc ) ;
         packet_no++ ;
+    }
+
+    // Do the "leftover" packet if required
+    if( have_remains ) {
+        const size_t remains_size = remaining_roids * CENTROID_SIZE ;
+        // how far into the data have we got?
+        const int sent = (packet_no-1) * slice_size ;
+        packetizeNoneImg( num_dets, CamConsts::PACKET_ROIDS, packet_no, num_packets,
+                          reinterpret_cast<uint8_t*>(data.data()) + sent, remains_size, tc ) ;
     }
 }
 
@@ -537,7 +552,7 @@ void recvLoop( void ) {
         } // end queue lockguard scope
 
         // exit
-        if( recv_cnt > 20 ) {
+        if( recv_cnt > 24 ) {
             running = 0 ;
         }
 
@@ -560,7 +575,8 @@ void simulateCamera( void ) {
             // Step 2 ...
             for( size_t i=1; i<SIM_NUM_ROIDS; i++ ) {
                 vision::packedCentroids8 dum ;
-                dum.xd = dum.xf = dum.yd = dum.yf = dum.rd = dum.rf = (uint8_t) i ;
+                dum.xd = dum.yd = (uint16_t) i ;
+                dum.xf = dum.yf = dum.rd = dum.rf = (uint8_t) i % 256 ;
                 packed_centroids.push_back( dum ) ;
             }
 
