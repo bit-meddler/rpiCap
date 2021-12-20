@@ -59,6 +59,7 @@ const char CENTROID_COMPRESSION = CamConsts::ROIDS_8BYTE ;
 const char CENTROID_SIZE = 10 ;
 
 // Socket Comunications
+// CnC Socket
 int sock_rx_fd = -1 ; // CnC socket (receve)
 struct sockaddr_in sock_addr {0} ; // The "Server" to which all cameras send 'roids and other goodies
 socklen_t SA_SIZE = sizeof( sock_addr ) ; // Frequently used
@@ -74,15 +75,19 @@ std::priority_queue< CamConsts::QPacket > transmit_queue ; // Packet queue
 std::mutex queue_mtx ;
 
 // Camera Simulation
-const int SIM_DELAY = 32 ; // ms delay between sim packets
+const int SIM_DELAY = 999 ; // ms delay between sim packets
 const int SIM_NUM_ROIDS = 12 ;
 
-/*************************************************************************** I M P L E M E N T A T I O N *************/
+// Retort messages - and a little journey back to '98
+char RETORTS[192]{0} ;
+size_t RETORT_STRIDES[6] = {0, 0, 0, 0, 0, 0} ;
+#define RET_ROIDS 0
+#define RET_STOP  1
+#define RET_1_IMG 2
+#define RET_IMGS  3
+#define RET_REGS  4
 
-// get the expected header size, based on packet data type
-inline size_t getHeadSize( const char dtype ){
-    return (dtype==CamConsts::PACKET_IMAGE) ? 24 : 16 ;
-}
+/*************************************************************************** I M P L E M E N T A T I O N *************/
 
 // A big enough error to abort the program
 void bail( const std::string msg ) {
@@ -122,6 +127,34 @@ void initalizeRegs( void ) {
     registers.impactvalx  = 666 ;
     registers.impactvaly  = 666 ;
     registers.impactvalz  = 666 ;
+}
+
+// Setup the retort messages
+void initalizeRetorts( void ) {
+    const char* strings[] = { "Start Centroid Stream",
+                              "Stop Streaming",
+                              "Send Image",
+                              "Start Image Stream" } ;
+    size_t total_len = 0 ;
+    size_t wrote = 0 ;
+    size_t i = 0 ;
+
+    // cristalize the camno in retorts
+    for( i=0; i<4; i++ ) {
+        wrote = snprintf( RETORTS+total_len, sizeof( RETORTS )-total_len, "*** CAMERA %d %s ***", CAM_ID, strings[i] ) ;
+        total_len += wrote ;
+        RETORT_STRIDES[ i+1 ] = total_len ;
+    }
+
+    // build a format string for reg-retorts
+    wrote = snprintf( RETORTS+total_len, sizeof( RETORTS )-total_len, "*** CAMERA %d setting register %%d to %%d ***", CAM_ID ) ;
+    total_len += wrote ;
+    RETORT_STRIDES[ i+1 ] = total_len ;
+    /*
+    for(i=0;i<5;i++) {
+        printf( "[%d] %d>%s<%d\n", i, RETORT_STRIDES[i], RETORTS+RETORT_STRIDES[i], RETORT_STRIDES[i+1] ) ;
+    }
+    */
 }
 
 // setup the UDP Socket for CnC
@@ -194,7 +227,7 @@ void composeHeader(       uint8_t* data,          // buffer to write headder int
     header.centroid_count = __bswap_16( short_tmp ) ;
 
     // Chose correct header size
-    size_t size = getHeadSize( packet_type ) ;
+    size_t size = (packet_type==CamConsts::PACKET_IMAGE) ? 24 : 16 ;
 
     // Compose the header
     header.flag = 0 ;
@@ -278,124 +311,136 @@ void sendDatagram( uint8_t* data, size_t size ) {
         }
 }
 
-// Simple Message
-void retort( const std::string msg ) {
-    // will be packetized and emitted later...
-    char buff[100] ;
-    snprintf( buff, sizeof(buff), "*** CAMERA %d %s ***", CAM_ID, msg.c_str() ) ;
-    packetizeNoneImg( 0, CamConsts::PACKET_TEXT, 1, 1, (uint8_t*)buff, strlen( buff ), timecode ) ;
-}
-
-// Regiser Setting Message
-void retortReg( const int reg, const int val ) {
-    // will be packetized and emitted later...
-    char buff[100] ;
-    snprintf( buff, sizeof(buff), "*** CAMERA %d setting register %d to %d ***", CAM_ID, reg, val ) ;
-    packetizeNoneImg( 0, CamConsts::PACKET_TEXT, 1, 1, (uint8_t*)buff, strlen( buff ), timecode ) ;
-}
-
 // Handle CnC Messages
 void handleCnC( uint8_t* msg, const size_t len ) {
+    // retorts
+    static char ret_buff[56] ;
+    int retort = -1 ;
+    int reg_address = 0;
+    int reg_val = 0 ;
+
+    // Handle the message
     switch ( msg[ 0 ] ) {
-            /*************** C O M M A N D S *************************************/
-            case CamConsts::CMD_START : {
-                // Start Streaming Centroids
-                retort( "Start Centroids" ) ;
-                registers._roid_stream = 1 ;
-            }
-            break ;
-            case CamConsts::CMD_STOP  : {
-                // Stop Streaming everything
-                retort( "Stop Streaming" ) ;
-                registers._roid_stream = 0 ;
-                registers._img_stream  = 0 ;
-            }
-            break ;
-            case CamConsts::CMD_SINGLE : {
-                // Send a lineup image
-                retort( "Send Image" ) ;
-                registers._send_one_img = 1 ;
-            }
-            break ;
-            case CamConsts::CMD_STREAM : {
-                // Start Streaming Images (line speed limited)
-                retort( "Start Image Stream") ;
-                registers._img_stream = 1 ;
-            }
-            break ;
-
-            /*************** R E Q U E S T S *************************************/
-            case CamConsts::REQ_REGSLO : {
-                // Request lower registers
-                wail( "Sending Low Registers" ) ;
-                packetizeNoneImg( 0, CamConsts::PACKET_REGLO, 1, 1, &registers.fps,  56, timecode ) ;
-            }
-            break ;
-            case CamConsts::REQ_REGSHI  : {
-                // Request higher registers
-                wail( "Sending High Registers" ) ;
-                packetizeNoneImg( 0, CamConsts::PACKET_REGHI, 1, 1, &registers.fps, 824, timecode ) ;
-            }
-            break ;
-            case CamConsts::REQ_VERSION : {
-                // Request version data
-                wail( "Version info" ) ;
-                packetizeNoneImg( 0, CamConsts::PACKET_VERS, 1, 1, (uint8_t*)"DEADBEEF", 8, timecode ) ;
-            }
-            break ;
-            case CamConsts::REQ_HELLO : {
-                packetizeNoneImg( 0, CamConsts::PACKET_TEXT, 1, 1, (uint8_t*)"h", 1, timecode ) ;
-            }
-            break ;
-            
-            /*************** R E G I S T E R S *************************************/
-            case CamConsts::SET_BYTE : {
-                // set 1 byte data in 1 byte register
-                if( len < 3 ){
-                    fail( "incomplete 'Set' Message (Byte)" ) ;
-                    break ;
-                }
-                retortReg( (int) msg[1], msg[2] ) ;
-                registers.reg[ (size_t) msg[1] ] = msg[2] ;
-            }
-            break ;
-            case CamConsts::SET_SHORT  : {
-                // set 2 Byte data in 2 Byte register
-                if( len < 5 ){
-                    fail( "incomplete 'Set' Message (Short)" ) ;
-                    break ;
-                }
-                // Bit of a problem with ended-ness here
-                int reg_address = __bswap_16( *reinterpret_cast< uint16_t *>(  &msg[1] ) ) ;
-
-                if( reg_address >= 300 ) {
-                    // masks are uint16_t
-                    uint16_t val = __bswap_16( *reinterpret_cast< uint16_t* >( &msg[3] ) ) ;
-                    registers.reg[ reg_address   ] = msg[4] ;
-                    registers.reg[ reg_address+1 ] = msg[3] ;
-                    retortReg( reg_address, (int) val ) ;
-
-                } else {
-                    // IMUs are int16_t
-                    int16_t val = __bswap_16( *reinterpret_cast< uint16_t* >( &msg[3] ) ) ;
-                    registers.reg[ reg_address ] = (int) val ;
-                    registers.reg[ reg_address   ] = msg[4] ;
-                    registers.reg[ reg_address+1 ] = msg[3] ;
-                    retortReg( reg_address, (int) val ) ;
-                }
-            }
-            break ;
-            case CamConsts::SET_WORD : {
-                // set 4 byte data in 1 byte register
-                fail( "No 4 byte commands for a cammera!" ) ;
-            }
-            break ;
-
-            default : {
-                fail( "Unexpected item in the bagging area!" ) ;
-            }
-            break;
+        /*************** C O M M A N D S *************************************/
+        case CamConsts::CMD_START : {
+            // Start Streaming Centroids
+            retort = RET_ROIDS ;
+            registers._roid_stream = 1 ;
         }
+        break ;
+        case CamConsts::CMD_STOP  : {
+            // Stop Streaming everything
+            retort = RET_STOP ;
+            registers._roid_stream = 0 ;
+            registers._img_stream  = 0 ;
+        }
+        break ;
+        case CamConsts::CMD_SINGLE : {
+            // Send a lineup image
+            retort = RET_1_IMG ;
+            registers._send_one_img = 1 ;
+        }
+        break ;
+        case CamConsts::CMD_STREAM : {
+            // Start Streaming Images (line speed limited)
+            retort = RET_IMGS ;
+            registers._img_stream = 1 ;
+        }
+        break ;
+
+        /*************** R E Q U E S T S *************************************/
+        case CamConsts::REQ_REGSLO : {
+            // Request lower registers
+            wail( "Sending Low Registers" ) ;
+            packetizeNoneImg( 0, CamConsts::PACKET_REGLO, 1, 1, &registers.fps,  56, timecode ) ;
+        }
+        break ;
+        case CamConsts::REQ_REGSHI  : {
+            // Request higher registers
+            wail( "Sending High Registers" ) ;
+            packetizeNoneImg( 0, CamConsts::PACKET_REGHI, 1, 1, &registers.fps, 824, timecode ) ;
+        }
+        break ;
+        case CamConsts::REQ_VERSION : {
+            // Request version data
+            wail( "Version info" ) ;
+            packetizeNoneImg( 0, CamConsts::PACKET_VERS, 1, 1, (uint8_t*)"DEADBEEF", 8, timecode ) ;
+        }
+        break ;
+        case CamConsts::REQ_HELLO : {
+            packetizeNoneImg( 0, CamConsts::PACKET_TEXT, 1, 1, (uint8_t*)"h", 1, timecode ) ;
+        }
+        break ;
+        
+        /*************** R E G I S T E R S *************************************/
+        case CamConsts::SET_BYTE : {
+            // set 1 byte data in 1 byte register
+            if( len < 3 ){
+                fail( "incomplete 'Set' Message (Byte)" ) ;
+                break ;
+            }
+            registers.reg[ (size_t) msg[1] ] = msg[2] ;
+            retort = RET_REGS ;
+            reg_address = (int) msg[1] ;
+            reg_val = (int) msg[2] ;
+        }
+        break ;
+        case CamConsts::SET_SHORT  : {
+            // set 2 Byte data in 2 Byte register
+            if( len < 5 ){
+                fail( "incomplete 'Set' Message (Short)" ) ;
+                break ;
+            }
+            // Bit of a problem with ended-ness here
+            reg_address = __bswap_16( *reinterpret_cast< uint16_t *>(  &msg[1] ) ) ;
+
+            if( reg_address >= 300 ) {
+                // masks are uint16_t
+                uint16_t val = __bswap_16( *reinterpret_cast< uint16_t* >( &msg[3] ) ) ;
+                registers.reg[ reg_address   ] = msg[4] ;
+                registers.reg[ reg_address+1 ] = msg[3] ;
+                reg_val = (int) val ;
+            } else {
+                // IMUs are int16_t
+                int16_t val = __bswap_16( *reinterpret_cast< uint16_t* >( &msg[3] ) ) ;
+                registers.reg[ reg_address ] = (int) val ;
+                registers.reg[ reg_address   ] = msg[4] ;
+                registers.reg[ reg_address+1 ] = msg[3] ;
+                reg_val = (int) val ;
+            }
+            retort = RET_REGS ;
+        }
+        break ;
+        case CamConsts::SET_WORD : {
+            // set 4 byte data in 1 byte register
+            fail( "No 4 byte commands for a cammera!" ) ;
+        }
+        break ;
+
+        /*************** F A L L   T H R O U G H *************************************/
+        default : {
+            fail( "Unexpected item in the bagging area!" ) ;
+        }
+        break ;
+    } // switch
+
+    // Emit the retorts if needed
+    if( retort >=0 ) {
+        size_t retort_idx = RETORT_STRIDES[ retort ] ;
+        if( retort == RET_REGS ) {
+            // format and send the retort
+            snprintf( ret_buff, 56, RETORTS + retort_idx, reg_address, reg_val ) ;
+            packetizeNoneImg( 0, CamConsts::PACKET_TEXT, 1, 1, (uint8_t*)ret_buff, strlen( ret_buff ), timecode ) ;
+
+        } else {
+            // send the retort
+            packetizeNoneImg( 0, CamConsts::PACKET_TEXT, 1, 1,
+                              (uint8_t*) &RETORTS + retort_idx, // ptr to Retorts + stride to selected
+                              RETORT_STRIDES[ retort+1 ] - retort_idx, // next ret idx - current = size
+                              timecode ) ;
+        }
+    } // do Retorts
+
 } // handleCnC( buffer, len )
 
 // Main loop for CnC.  Will be semaphored when data (Image/Centroids) are available.
@@ -424,8 +469,6 @@ void recvLoop( void ) {
 
     wail( "CAMERA STARTED!" ) ;
     while( running ) {
-        // std::cout << "Waiting for Packet" << std::endl ;
-
         // Select
         select_timeout.tv_sec = CamConsts::SOCKET_TIMEOUT ;
         select_timeout.tv_usec = 0 ;
@@ -437,12 +480,8 @@ void recvLoop( void ) {
 
         ready_fd = select( num_fds, &readable_fds, NULL, NULL, &select_timeout) ;
 
-        if( ready_fd < 0) {
-            bail( "Error in 'select'" ) ;
-        } else if( ready_fd == 0 )  {
-            wail( "select Timed out" ) ;
-        } else {
-            // DTRT bassed on the available socket
+        if( ready_fd > 0) {
+            // Check for CnC Messages
             if( FD_ISSET( sock_rx_fd, &readable_fds ) ) {
                 // receve from CnC Socket
                 recv_len = recvfrom( sock_rx_fd, in_buf, RECV_BUFF_SZ, 0, (struct sockaddr *) &sender_data, &SA_SIZE ) ;
@@ -462,6 +501,7 @@ void recvLoop( void ) {
                 FD_CLR( sock_rx_fd, &readable_fds ) ;
             }
 
+            // Check for queue flag
             if( FD_ISSET( queue_rx_efd, &readable_fds ) ) {
                 //
                 recv_len = read( queue_rx_efd, &queue_rx_cnt, EFD_SIZE ) ;
@@ -497,7 +537,7 @@ void recvLoop( void ) {
         } // end queue lockguard scope
 
         // exit
-        if( recv_cnt > 17 ) {
+        if( recv_cnt > 20 ) {
             running = 0 ;
         }
 
@@ -536,6 +576,7 @@ int main( int argc, char* args[] ) {
 
     // Initalization
     initalizeRegs() ;
+    initalizeRetorts() ;
 
     // Just a bogus timecode
     timecode.h = 10 ;
@@ -546,7 +587,7 @@ int main( int argc, char* args[] ) {
     // Create and Bind the Socket
     setupComunications() ;
 
-    // CnC Thread
+    // CnC / Camera Threads
     std::thread thread_CnC( recvLoop ) ;
     std::thread* thread_Cam = new std::thread( simulateCamera ) ;
 
