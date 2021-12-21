@@ -6,3 +6,8 @@
 
 # Secret Files
 *.secret
+
+# C++ Objects and archived libs
+*.o
+*.a
+*.so
