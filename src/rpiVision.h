@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <algorithm>
 #include <cmath>
 #include <map>
 #include <vector>

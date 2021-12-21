@@ -17,9 +17,8 @@
  along with rpiCap.  If not, see <http://www.gnu.org/licenses/>.
 
 */
-#pragma once
 
-#include "camVision.h"
+#include "rpiVision.h"
 
 namespace vision {
 
@@ -29,9 +28,7 @@ namespace vision {
  * x and m are cols,
  * y and n are rows
  */
- 
-using CamTypes ;
-    
+
 // Do Connected Components on the whole Image (flat)
 // As above, but optimize for processing a whole Image - still flat
 VecDet_t ConnectedComponentsImage(
@@ -365,7 +362,7 @@ VecDet_t ConnectedComponentsImage(
     float_t        m_00R ;            // Area Reciprical
     float_t        x, y, r, score ;   // Centroid of the RoI
     double_t       L1, L2, a, b, c, d;// Used to compute Radius
-    DetVec_t       ret ;              // The return
+    VecDet_t       ret ;              // The return
     uint8_t        w, h ;             // BB dimentions
     
     ret.reserve( region_list.size() ) ;
@@ -444,7 +441,7 @@ VecDet_t ConnectedComponentsImage(
 
 VecRoids8_t PackCentroids8( const VecDet_t &centroids ) { // returns Vector of packed centroids
     // TODO: Move to a more sensible library
-    Roid8Vec_t ret ;
+    VecRoids8_t ret ;
     ret.reserve( centroids.size() ) ;
 
     SimpleDet  c ;        // temp centroid
@@ -479,7 +476,8 @@ VecRoids8_t PackCentroids8( const VecDet_t &centroids ) { // returns Vector of p
 
 VecRoids10_t PackCentroids10( const VecDet_t &centroids ) {
     // TODO: PackedCentroids10 Implementation
-    return NULL ;
+    VecRoids10_t ret ;
+    return ret ;
 }// PackCentroids10
 
 } // ns vision

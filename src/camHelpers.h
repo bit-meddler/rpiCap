@@ -38,5 +38,5 @@ void wail( const std::string msg ) ;
 void hexdump( const uint8_t* data, const size_t size ) ;
 
 // dump the "QPacket" strict that lives in the transmittion Queue
-void packetDump( CamTypes::QPacket const& p ) ;
+void packetDump( const CamTypes::QPacket* p ) ;
 

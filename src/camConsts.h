@@ -20,10 +20,12 @@
 
 #pragma once
 
+#include <string>
+
 namespace CamConsts {
 
 // Socket and comms
-#define SERVER_IP                  "192.168.0.20"
+const std::string SERVER_IP      = "192.168.0.20" ;
 const int         UDP_PORT_TX    = 1234 ; // Server's RX
 const int         UDP_PORT_RX    = 1235 ; // Server's TX
 const int         SOCKET_TIMEOUT =   10 ; // Select Timeout (secs)

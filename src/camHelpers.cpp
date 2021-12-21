@@ -18,8 +18,6 @@
 
 */
 
-#pragma once
-
 #include "camHelpers.h"
 
 // A big enough error to abort the program
@@ -38,8 +36,8 @@ void wail( const std::string msg ) {
     std::cout << msg << std::endl ;
 }
 
-void packetDump( CamTypes::QPacket const& p ) {
-	std::cout << "{" << p.priority << " [" << p.size << "]} " ;
+void packetDump( const CamTypes::QPacket* p ) {
+	std::cout << "{" << p->priority << " [" << p->size << "]} " ;
 }
 
 void hexdump( const uint8_t* data, const size_t size ) {
@@ -66,9 +64,10 @@ void hexdump( const uint8_t* data, const size_t size ) {
         for( i=0; i<16 && idx<size; i++ ) {
 			tgt = data[ idx ] ;
 			if( tgt < 32 ) { // Don't print control characters
-				tgt = (uint8_t) "." ;
-			}
-            printf( "%c", tgt ) ;
+				printf( "." ) ;
+			} else {
+                printf( "%c", tgt ) ;
+            }
             idx++ ;
             if( i==7 ){
                 printf( " " ) ;

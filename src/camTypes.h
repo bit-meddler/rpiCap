@@ -21,7 +21,6 @@
 #pragma once
 
 #include <queue>
-
  
 namespace CamTypes {
 
@@ -177,7 +176,7 @@ struct Header {
      } ;
 } ;
 
-typedef std::priority_queue< CamConsts::QPacket > QueuePackets_t ;
+typedef std::priority_queue< QPacket > QueuePackets_t ;
 
 } // ns CamTypes
 

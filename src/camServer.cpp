@@ -42,14 +42,14 @@
 #include "camConsts.h"
 #include "camTypes.h"
 #include "camHelpers.h"
-
+#include "rpiVision.h"
 
 // Globals
 // General Camera Control
-CamConsts::CamRegs registers{ 0 } ; // camera control registers
-CamConsts::PacketData packetData ; // Packetization aids
+CamTypes::CamRegs registers{ 0 } ; // camera control registers
+CamTypes::PacketData packetData ; // Packetization aids
 std::mutex packet_dat_mtx ; // OK this needs a mutex as well
-CamConsts::Timecode timecode{0} ; // Global clock (This will probably change)
+CamTypes::Timecode timecode{0} ; // Global clock (This will probably change)
 
 // 'Fixed' Settings
 const int  CAM_ID = 1 ; // should be derived from IP TBH
@@ -216,12 +216,12 @@ void composeHeader(       uint8_t* data,          // buffer to write headder int
                     const char     packet_type,   // Packet Type
                     const size_t   frag_num,      // Fragment number
                     const size_t   frag_count,    // Fragment Count
-                    const CamConsts::Timecode tc, // current time
+                    const CamTypes::Timecode tc, // current time
                     const size_t   img_os=0,      // image offset
                     const size_t   img_sz=0       // image total size
 ) {
     std::lock_guard<std::mutex> lock_packet_dat( packet_dat_mtx ) ;
-    CamConsts::Header header ; // should be initalized as 0
+    CamTypes::Header header ; // should be initalized as 0
 
     // Encode Rolling Packet count
     uint16_t short_tmp = (((packetData.packet_cnt & 0x1F80) << 1) | 0x8000) | (packetData.packet_cnt & 0x007F) ;
@@ -261,7 +261,7 @@ void packetizeNoneImg( const size_t   roid_count,   // total number of centroids
                        const size_t   frag_count,   // Fragment Count
                        const uint8_t* data,         // Payload
                        const size_t   data_sz,      // Size of Payload
-                       const CamConsts::Timecode tc // Current time
+                       const CamTypes::Timecode tc // Current time
 ) {
     size_t buffer_required = 16 + data_sz ;
     uint8_t* dat = new uint8_t[ buffer_required ]{0} ;
@@ -275,7 +275,7 @@ void packetizeNoneImg( const size_t   roid_count,   // total number of centroids
     priority += frag_num ;
     
     // Enqueue
-    CamConsts::QPacket* dgm = new CamConsts::QPacket( priority, buffer_required, dat ) ;
+    CamTypes::QPacket* dgm = new CamTypes::QPacket( priority, buffer_required, dat ) ;
     {
         std::lock_guard<std::mutex> lock_queue( queue_mtx ) ;
         transmit_queue.push( *dgm ) ;
@@ -289,8 +289,8 @@ void packetizeNoneImg( const size_t   roid_count,   // total number of centroids
 }
 
 // break apart a vector of packed Centroids into fragments, respecting the "max dets" register setting.
-void fragmentCentroids(       vision::Roid8Vec_t  data, // Vector of centroids to fragment & enque (can't be const for cast)
-                        const CamConsts::Timecode tc    // Current time
+void fragmentCentroids(       vision::VecRoids8_t data, // Vector of centroids to fragment & enque (can't be const for cast)
+                        const CamTypes::Timecode tc    // Current time
 ) {
     // dets
     const int    max_dets   = registers.numdets * 10 ;
@@ -486,7 +486,7 @@ void recvLoop( void ) {
     size_t send_cnt = 0 ;
 
     // For Packet sending
-    CamConsts::QPacket packet( 0, 0, nullptr ) ; // Temp data packet
+    CamTypes::QPacket packet( 0, 0, nullptr ) ; // Temp data packet
 
     wail( "CAMERA STARTED!" ) ;
     while( running ) {
@@ -575,19 +575,19 @@ void simulateCamera( void ) {
         // enqueue some bogus centroid data
         if( registers.roid_stream ) {
             // Step 1 Steal Underpants.
-            vision::Roid8Vec_t packed_centroids ;
+            vision::VecRoids8_t packed_centroids ;
             packed_centroids.reserve( SIM_NUM_ROIDS ) ;
 
             // Step 2 ...
             for( size_t i=1; i<SIM_NUM_ROIDS; i++ ) {
-                vision::packedCentroids8 dum ;
+                vision::PackedCentroids8 dum ;
                 dum.xd = dum.yd = (uint16_t) i ;
                 dum.xf = dum.yf = dum.rd = dum.rf = (uint8_t) i % 256 ;
                 packed_centroids.push_back( dum ) ;
             }
 
             // Step 3 Profit !
-            CamConsts::Timecode frozen_time = timecode ; // deep copy?
+            CamTypes::Timecode frozen_time = timecode ; // deep copy?
             fragmentCentroids( packed_centroids, frozen_time ) ;
         }
     }
