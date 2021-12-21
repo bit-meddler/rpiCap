@@ -22,7 +22,14 @@
 #include "camVision.h"
 
 namespace vision {
-    
+
+/* 
+ * NOTE: TopLeft BottomRight convention used in this project
+ * x,y -> m,n
+ * x and m are cols,
+ * y and n are rows
+ */
+ 
 using CamTypes ;
     
 // Do Connected Components on the whole Image (flat)

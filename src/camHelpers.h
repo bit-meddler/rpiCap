@@ -23,7 +23,7 @@
 #include <iostream>
 #include <string>
 
-#include "camHelpers.h"
+#include "camTypes.h"
 
 // A big enough error to abort the program
 void bail( const std::string msg ) ;
@@ -34,5 +34,9 @@ void fail( const std::string msg ) ;
 // Just a report or log, not error
 void wail( const std::string msg ) ;
 
+// helps debug network packets
 void hexdump( const uint8_t* data, const size_t size ) ;
+
+// dump the "QPacket" strict that lives in the transmittion Queue
+void packetDump( CamTypes::QPacket const& p ) ;
 

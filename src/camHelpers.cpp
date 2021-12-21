@@ -36,12 +36,17 @@ void fail( const std::string msg ) {
 // Just a report or log, not error
 void wail( const std::string msg ) {
     std::cout << msg << std::endl ;
-    }
+}
+
+void packetDump( CamTypes::QPacket const& p ) {
+	std::cout << "{" << p.priority << " [" << p.size << "]} " ;
+}
 
 void hexdump( const uint8_t* data, const size_t size ) {
     size_t idx = 0 ;
     size_t tmp = idx ;
     size_t i ;
+	uint8_t tgt = 0 ;
     while( idx < size ) {
         tmp = idx ;
         for( i=0; i<16 && idx<size; i++ ) {
@@ -59,7 +64,11 @@ void hexdump( const uint8_t* data, const size_t size ) {
         }
         idx = tmp ;
         for( i=0; i<16 && idx<size; i++ ) {
-            printf( "%c", data[ idx ] ) ;
+			tgt = data[ idx ] ;
+			if( tgt < 32 ) { // Don't print control characters
+				tgt = (uint8_t) "." ;
+			}
+            printf( "%c", tgt ) ;
             idx++ ;
             if( i==7 ){
                 printf( " " ) ;
