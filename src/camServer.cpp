@@ -73,7 +73,7 @@ CamTypes::QueuePackets_t transmit_queue ; // Packet queue
 std::mutex queue_mtx ;
 
 // Camera Simulation
-const int SIM_DELAY = 999 ; // ms delay between sim packets
+const std::chrono::milliseconds SIM_DELAY = std::chrono::milliseconds( 999 ) ; // ms delay between sim packets
 const int SIM_NUM_ROIDS = 275 ;
 
 // Threads
@@ -571,7 +571,7 @@ void recvLoop( void ) {
 void simulateCamera( void ) {
     // don't bother with memory managment just yet...
     while( 1 ) {
-        std::this_thread::sleep_for( std::chrono::milliseconds( SIM_DELAY ) ) ;
+        std::this_thread::sleep_for(  SIM_DELAY ) ;
         // enqueue some bogus centroid data
         if( registers.roid_stream ) {
             // Step 1 Steal Underpants.

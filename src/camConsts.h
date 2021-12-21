@@ -31,7 +31,6 @@ const int         UDP_PORT_RX    = 1235 ; // Server's TX
 const int         SOCKET_TIMEOUT =   10 ; // Select Timeout (secs)
 const int         RECV_BUFF_SZ   =  256 ; // should only receve 1, 3, 5, or 7 Byte messages
 
-// can these be defines ?
 // Command & Control
 const char CMD_START   = 0x6E ; // 'n'
 const char CMD_STOP    = 0x20 ; // ' '
