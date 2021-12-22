@@ -13,6 +13,8 @@ Ok, this is the big one.  My project to create an Open Source MoCap Camera based
 
 4. But wait! [This arducam](https://www.arducam.com/product/arducam-full-hd-color-global-shutter-camera-for-raspberry-pi-2-3mp-ar0234-wide-angle-pivariety-camera-module-b0353/) has a Global Shutter, and apparently an external sync (TTL?) Input.  Were here guys!  This might just do it.  It's Colour, and in the Visible spectrum (not really what we want for MoCap), but if I can grab the luma portion and it syncs correctly.  We're rock'in!
 
+5. Even better the 'Authentic' pi V2 HQ Camera now either emits _'source'_ or accepts _'sink'_ a timing signal. So this needs to be distributed from one Sync Master, to all the other cameras.  Not as slick as PtP, but an accepted method.  Will need to be a LVDS on twisted pair I think.  This is going to be Amazing!!!
+
 ## Licence
 This project is subject to the GPLv3 Licence, a copy is in the root, and will be refferenced in the source and resource files going forwards.
 
@@ -30,18 +32,18 @@ This project is subject to the GPLv3 Licence, a copy is in the root, and will be
  - [x] 'connected components' algo
  - [x] 'centroid computation' algo
  - [x] evaluate timing of these algos
- - [ ] possible threaded implementation of these algos & main loop
+ - [x] possible threaded implementation of these algos & main loop
  - [x] c implementation of best result
  - [ ] syncronization strategy research c.f. Hermann-SW
- - [ ] RTOS R&D if needed
+ - [ ] ~RTOS R&D if needed~
 
 ### Algo
 - [x] Connected components _Monolithic_
 - [x] Connected components _Paralel_
-- [ ] Centroids _CircleFit_
-- [ ] Centroids _AvgCenter_
+- [ ] ~Centroids _CircleFit_~
+- [ ] ~Centroids _AvgCenter_~
 - [x] Centroids _HuMoments_
-- [ ] Monolithic Vs Parallel Implementations
+- [ ] ~Monolithic Vs Parallel Implementations~
 - [x] SIMD Implementations
 
 ### Syncronization
