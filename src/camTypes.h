@@ -47,8 +47,8 @@ struct CamRegs {
         struct {                           // variable access
             /******** P R I V A T E  R E G S ****************************/
             uint8_t   roid_stream ;        // PRIVATE should we be streaming 'roids?
-            uint8_t   send_one_img ;       // send one image
-            uint8_t   img_stream ;         // stream images
+            uint8_t   send_one_img ;       // PRIVATE send one image
+            uint8_t   img_stream ;         // PRIVATE stream images
             uint8_t   X_unknown_0[197] ;   // Here be Dragons
             /******** K N O W N   R E G S *******************************/
             uint8_t   fps ;                // reg 200
@@ -147,7 +147,7 @@ struct CamRegs {
 
 // Packetization helper
 struct PacketData {
-    uint32_t roll_cnt {0} ; // rolling counter
+    uint32_t roll_cnt {0} ;   // rolling counter
     uint32_t packet_cnt {0} ; // packet counter
 
     void inc( void ) {

@@ -36,9 +36,7 @@ namespace vision {
  * y and n are rows
  */
 
-/*
- *************************************************************************** Computer Types
-*/
+/******************************************************************************* Computer Vision Types ****************/
 
 // Optimize type of line data ? Will this make a difference for computation?
 typedef uint16_t line_t ; // test: int, uint16_t, uint32_t, uint_64_t ???
@@ -196,16 +194,15 @@ typedef std::map< line_t, line_t >             MapRoiId_t ;
 typedef std::map< line_t, line_t >::iterator   MapRoiIdIt_t ;
 typedef std::map< line_t, size_t >             MapRoIdx_t ;
 
-/*
- *************************************************************************** Computer Vision Functions
-*/
+/******************************************************************************* Computer Vision Functions ************/
+
 VecDet_t ConnectedComponentsImage(
     uint8_t*      &img,              // image to analyse
     const int     img_w,             // img width
     const int     img_h,             // img height
     const uint8_t threshold,         // Blob Brightness
-    const size_t  vec_size           // Vctor reserve size
-    // returns a Vector of Detections
+    const size_t  vec_size           // Vctor reserve size (hint with last)
+    // returns a Vector of Detections (VecDet_t)
 ) ;
 
 VecRoids8_t  PackCentroids8(  const VecDet_t &centroids ) ;
